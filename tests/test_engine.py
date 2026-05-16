@@ -8,12 +8,13 @@ import pytest
 from council.config import Settings
 from council.engine import get_provider, run_council
 from council.models import AgentRole
+from council.providers.errors import UnsupportedProviderModeError
 from council.storage import save_run
 
 
 def test_get_provider_rejects_non_mock_mode() -> None:
     settings = Settings(llm_mode="openai", runs_dir=Path("./runs"), mock_model="mock-council-v1")
-    with pytest.raises(ValueError, match="Mock mode only"):
+    with pytest.raises(UnsupportedProviderModeError, match="Unsupported LLM_MODE"):
         get_provider(settings)
 
 
@@ -32,8 +33,10 @@ def test_run_council_produces_complete_dossier() -> None:
     assert dossier.next_actions
     assert dossier.open_questions
     assert 0.0 <= dossier.confidence_score <= 1.0
-    assert result.provider_name == "mock"
+    assert result.provider_metadata.provider_name == "mock"
     assert len(result.agent_briefs) == len(AgentRole) - 1
+    assert all(brief.reasoning for brief in result.agent_briefs)
+    assert all(brief.source_refs == [] for brief in result.agent_briefs)
 
 
 def test_save_run_writes_json_and_markdown() -> None:
@@ -55,3 +58,5 @@ def test_save_run_writes_json_and_markdown() -> None:
         assert "## Executive Summary" in md_text
         assert "## Confidence Score" in md_text
         assert md_text.index("## Assumptions") < md_text.index("## Recommendation")
+        assert "raw_response" not in md_text
+        assert '"provider_metadata"' in json_text

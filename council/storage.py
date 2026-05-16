@@ -17,6 +17,7 @@ def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
 
 def _format_markdown(result: CouncilRunResult) -> str:
     dossier = result.dossier
+    meta = result.provider_metadata
     confidence_pct = f"{dossier.confidence_score:.0%}"
 
     lines = [
@@ -33,8 +34,11 @@ def _format_markdown(result: CouncilRunResult) -> str:
         f"- **Run ID:** `{dossier.run_id}`",
         f"- **Timestamp (UTC):** {dossier.timestamp.isoformat()}",
         f"- **Schema version:** {result.schema_version}",
-        f"- **Provider:** {result.provider_name}",
-        f"- **Model:** {result.model_name}",
+        f"- **Provider:** {meta.provider_name}",
+        f"- **Model:** {meta.model_name}",
+        f"- **Mode:** {meta.mode}",
+        f"- **Structured output:** {meta.supports_structured_output}",
+        f"- **Streaming:** {meta.supports_streaming}",
         "",
         "## Decision Question",
         "",
@@ -71,14 +75,16 @@ def _format_markdown(result: CouncilRunResult) -> str:
                 f"### {role_label} Agent",
                 "",
                 f"**Headline:** {brief.headline}",
+                f"**Confidence:** {brief.confidence:.0%} ({brief.confidence:.2f})",
+                "",
+                brief.reasoning,
                 "",
             ]
         )
-        if brief.findings:
-            lines.extend(f"- {finding}" for finding in brief.findings)
-        else:
-            lines.append("_No findings recorded._")
-        lines.append("")
+        if brief.source_refs:
+            lines.append("**Sources:**")
+            lines.extend(f"- {ref}" for ref in brief.source_refs)
+            lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
 

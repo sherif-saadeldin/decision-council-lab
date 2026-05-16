@@ -71,7 +71,8 @@ def render_result(
             f"[bold]{dossier.recommendation}[/bold]\n\n"
             f"Confidence: {confidence_pct}\n"
             f"Run ID: {dossier.run_id}\n"
-            f"Mode: {result.provider_name} ({result.model_name})",
+            f"Mode: {result.provider_metadata.mode} "
+            f"({result.provider_metadata.provider_name} / {result.provider_metadata.model_name})",
             title="Executive Summary",
         )
     )

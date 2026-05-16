@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from council.providers.models import ProviderMetadata, ProviderResponse
 
 
 class AgentRole(str, Enum):
@@ -19,7 +23,9 @@ class AgentRole(str, Enum):
 class AgentBrief(BaseModel):
     role: AgentRole
     headline: str
-    findings: list[str] = Field(default_factory=list)
+    reasoning: str
+    confidence: float = Field(ge=0.0, le=1.0, default=0.0)
+    source_refs: list[str] = Field(default_factory=list)
 
 
 class DecisionDossier(BaseModel):
@@ -44,5 +50,27 @@ class CouncilRunResult(BaseModel):
     schema_version: str = RUN_SCHEMA_VERSION
     dossier: DecisionDossier
     agent_briefs: list[AgentBrief] = Field(default_factory=list)
-    provider_name: str = "mock"
-    model_name: str = "mock-council-v1"
+    provider_metadata: ProviderMetadata
+    provider_responses: list[ProviderResponse] = Field(default_factory=list)
+
+    @property
+    def provider_name(self) -> str:
+        return self.provider_metadata.provider_name
+
+    @property
+    def model_name(self) -> str:
+        return self.provider_metadata.model_name
+
+
+def _rebuild_models() -> None:
+    from council.providers.models import ProviderMetadata, ProviderResponse
+
+    CouncilRunResult.model_rebuild(
+        _types_namespace={
+            "ProviderMetadata": ProviderMetadata,
+            "ProviderResponse": ProviderResponse,
+        }
+    )
+
+
+_rebuild_models()
