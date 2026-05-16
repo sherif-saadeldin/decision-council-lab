@@ -56,8 +56,14 @@ def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
                 chair_model = str(item.get("model_name") or chair_model)
                 break
 
+    direct_answer = str(dossier.get("direct_answer") or "").strip()
     recommendation = str(dossier.get("recommendation") or "").strip()
-    preview = recommendation.split("\n", 1)[0][:120] if recommendation else question[:120]
+    if direct_answer:
+        preview = direct_answer[:120]
+    elif recommendation:
+        preview = recommendation.split("\n", 1)[0][:120]
+    else:
+        preview = question[:120]
     confidence = dossier.get("confidence_score")
     confidence_score = float(confidence) if confidence is not None else None
 

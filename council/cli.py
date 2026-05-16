@@ -12,6 +12,7 @@ from rich.table import Table
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
 from council.costing import CouncilBudgetExceededError
 from council.provider_availability import HostedProviderUnavailableError
+from council.verdict_quality import VerdictQualityError, decision_label
 from council.council_session import CouncilSessionRequest
 from council.role_routing import CouncilRouting, parse_council_preset_list
 from council.run_catalog import RunNotFoundError, list_recent_runs
@@ -68,6 +69,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     RunNotFoundError,
     CouncilBudgetExceededError,
     HostedProviderUnavailableError,
+    VerdictQualityError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -855,7 +857,8 @@ def render_council_result(
     run_id = dossier.run_id
     next_cmd = _runs_show_command(run_id)
     confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type = dossier.decision_type.value.replace("_", " ")
+    decision_type = decision_label(dossier.decision_type)
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
 
     if quiet:
         console.print(json_path)
@@ -874,15 +877,20 @@ def render_council_result(
 
     console.print(
         Panel.fit(
-            f"[bold]{dossier.recommendation.split(chr(10), 1)[0]}[/bold]\n\n"
+            f"[bold]Direct answer:[/bold] {direct}\n\n"
+            f"[bold]Decision:[/bold] {decision_type}\n"
             f"Run ID: [cyan]{run_id}[/cyan]\n"
-            f"Decision type: {decision_type}\n"
             f"Confidence: {confidence_pct}\n"
             f"Deciding factor: {dossier.deciding_factor}",
             title="Multi-Model Council Verdict",
             border_style="green",
         )
     )
+
+    _print_preview_list(console, "Do next", dossier.next_actions)
+    _print_preview_list(console, "Do not do", dossier.do_not_do)
+    if dossier.approval_gate.strip():
+        console.print(f"[bold]Approval gate[/bold]\n  {dossier.approval_gate.strip()}\n")
 
     if cost_estimate is not None:
         render_cost_estimate(console, cost_estimate)
@@ -1151,13 +1159,14 @@ def render_result(
 
     dossier = result.dossier
     confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type = dossier.decision_type.value.replace("_", " ")
+    decision_type = decision_label(dossier.decision_type)
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
     fast_label = "\n[yellow]Fast mode[/yellow]" if fast_mode else ""
 
     console.print(
         Panel.fit(
-            f"[bold]{dossier.recommendation}[/bold]\n\n"
-            f"Decision type: {decision_type}\n"
+            f"[bold]Direct answer:[/bold] {direct}\n\n"
+            f"[bold]Decision:[/bold] {decision_type}\n"
             f"Confidence: {confidence_pct}\n"
             f"Run ID: {dossier.run_id}\n"
             f"Mode: {result.provider_metadata.mode} "
@@ -1180,7 +1189,10 @@ def render_result(
     console.print()
 
     _print_preview_list(console, "Top risks", dossier.risks)
-    _print_preview_list(console, "Next actions", dossier.next_actions)
+    _print_preview_list(console, "Do next", dossier.next_actions)
+    _print_preview_list(console, "Do not do", dossier.do_not_do)
+    if dossier.approval_gate.strip():
+        console.print(f"[bold]Approval gate[/bold]\n  {dossier.approval_gate.strip()}\n")
 
     try:
         json_display = json_path.relative_to(Path.cwd())

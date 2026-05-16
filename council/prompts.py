@@ -55,6 +55,11 @@ DOSSIER_JSON_SCHEMA: dict[str, Any] = {
         "arguments_against": _STRING_ARRAY,
         "risks": _STRING_ARRAY,
         "recommendation": {"type": "string"},
+        "direct_answer": {"type": "string"},
+        "why_this_decision": _STRING_ARRAY,
+        "what_would_change_mind": _STRING_ARRAY,
+        "do_not_do": _STRING_ARRAY,
+        "approval_gate": {"type": "string"},
         "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
         "kill_criteria": _STRING_ARRAY,
         "next_actions": _STRING_ARRAY,
@@ -75,6 +80,11 @@ DOSSIER_JSON_SCHEMA: dict[str, Any] = {
         "arguments_against",
         "risks",
         "recommendation",
+        "direct_answer",
+        "why_this_decision",
+        "what_would_change_mind",
+        "do_not_do",
+        "approval_gate",
         "confidence_score",
         "kill_criteria",
         "next_actions",
@@ -137,21 +147,31 @@ AGENT_OUTPUT_RULES = (
 )
 
 CHAIR_INSTRUCTIONS = (
-    "You are the Chair/Judge Agent. You must adjudicate, not summarize.\n"
-    "Requirements:\n"
-    "1. Explicitly resolve disagreements between specialists (who wins and why).\n"
-    "2. Choose decision_type: proceed | proceed_with_constraints | pause | reject.\n"
-    "3. Name the single strongest argument for and against.\n"
-    "4. State the deciding factor that tips the balance.\n"
-    "5. Explain confidence_rationale (why confidence_score is justified).\n"
-    "6. Lower confidence when specialists report material evidence_gaps or unsupported_assumptions.\n"
-    "7. Penalize unsupported specificity: do not upgrade vague agent claims into precise numbers.\n"
-    "8. kill_criteria may only use proposed_metrics (labeled 'proposed:') from council briefs "
-    "or your proposed_metrics list—never invent thresholds.\n"
-    "9. Consolidate cross-agent evidence_gaps and unsupported_assumptions in dossier fields.\n"
-    "10. recommendation must align with decision_type and deciding_factor.\n"
-    "11. When a debate transcript is provided, you must weigh advocate vs skeptic exchanges "
-    "and the moderator's unresolved points in disagreement_resolution and deciding_factor.\n"
+    "You are the Chair/Judge Agent. You must adjudicate the specific decision question, "
+    "not give generic product-building advice.\n"
+    "Required verdict structure (all fields mandatory):\n"
+    "1. direct_answer — exactly one sentence that answers the decision question directly "
+    "(yes/no/how/which path). Must name the subject of the question.\n"
+    "2. decision_type — one of: proceed | proceed_with_constraints | pause | reject.\n"
+    "3. why_this_decision — exactly 3 concrete reasons tied to council briefs and debate "
+    "(not generic platitudes).\n"
+    "4. what_would_change_mind — exactly 3 specific conditions that would change the verdict.\n"
+    "5. next_actions — exactly 3 specific actions the decision-maker should take next "
+    "(Do Next).\n"
+    "6. do_not_do — exactly 3 explicit anti-actions to avoid (scope traps, wrong sequencing).\n"
+    "7. approval_gate — one clear sentence: what the human must approve before build/pack work.\n"
+    "Also required: disagreement_resolution, strongest_argument_for/against, deciding_factor, "
+    "confidence_rationale, confidence_score, recommendation (executive summary aligned with "
+    "direct_answer), assumptions, arguments_for/against, risks, kill_criteria, open_questions, "
+    "evidence_gaps, proposed_metrics, unsupported_assumptions.\n"
+    "Rules:\n"
+    "- Resolve disagreements between specialists explicitly (who wins and why).\n"
+    "- Lower confidence when material evidence_gaps or unsupported_assumptions remain.\n"
+    "- Do not invent metrics, dates, or dollar amounts unless in the question or briefs.\n"
+    "- kill_criteria may only use proposed_metrics from briefs or your proposed_metrics list.\n"
+    "- When debate transcript is provided, weigh advocate vs skeptic and moderator tensions.\n"
+    "- Never output placeholder text like 'time-boxed internal prototype' unless the question "
+    "is literally about that topic.\n"
     "Return JSON only matching the schema."
 )
 
@@ -218,7 +238,10 @@ def format_dossier_user_prompt(
 
         lines.extend(["", format_debate_transcript_for_chair(debate_transcript)])
     lines.append(
-        "\nSynthesize the final decision dossier. Resolve conflicts explicitly. "
-        "Do not invent metrics or timelines. Penalize unsupported specificity."
+        "\nSynthesize the final decision dossier. The direct_answer must answer this "
+        "question in one sentence. Provide exactly 3 items each for why_this_decision, "
+        "what_would_change_mind, next_actions (Do Next), and do_not_do. "
+        "approval_gate must state what the user must approve before implementation work. "
+        "Resolve conflicts explicitly. Do not invent metrics or timelines."
     )
     return "\n".join(lines)

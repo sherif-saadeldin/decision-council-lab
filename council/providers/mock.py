@@ -18,10 +18,10 @@ from council.models import (
     DebateRound,
     DebateTranscript,
     DecisionDossier,
-    DecisionType,
     ModeratorSummary,
 )
 from council.prompt_debug import PromptDebugCollector
+from council.mock_verdict import build_mock_dossier
 from council.prompts import (
     agent_instructions,
     chair_instructions,
@@ -175,108 +175,11 @@ class MockProvider(LLMProvider):
                 user_content=user_content,
             )
 
-        internal_tool = self._mentions_internal_tool(question)
-        if internal_tool:
-            decision_type = DecisionType.PROCEED_WITH_CONSTRAINTS
-            recommendation = (
-                "Proceed with building the decision council as an internal tool first, "
-                "with scope constrained to CLI + structured artifacts until dossier quality is proven."
-            )
-            confidence = 0.78
-        else:
-            decision_type = DecisionType.PROCEED
-            recommendation = "Proceed with a time-boxed internal prototype before external packaging."
-            confidence = 0.72
-
-        strongest_for = (
-            "Internal tooling de-risks architecture and produces reusable decision artifacts."
-        )
-        strongest_against = (
-            "Mock-only reasoning can look rigorous while remaining generic on novel questions."
-        )
-        deciding_factor = (
-            "The question prioritizes learning velocity and traceability over immediate distribution."
-            if internal_tool
-            else "The cost of a small prototype is lower than committing to a full platform prematurely."
-        )
-
-        disagreement_resolution = (
-            "Research and Operator favor shipping an internal engine now; Skeptic and Risk warn "
-            "against overconfidence in mock output. Chair weights execution learning over polish, "
-            "but requires measurable kill criteria before expanding scope."
-        )
-        if debate_transcript and debate_transcript.rounds:
-            last = debate_transcript.rounds[-1]
-            tensions = ", ".join(last.moderator.deciding_tensions) or "execution vs quality"
-            disagreement_resolution = (
-                f"After {debate_transcript.rounds_completed} debate rounds, the chair weighs council "
-                f"briefs and debate exchanges. Moderator deciding tensions: {tensions}. "
-                f"Unresolved: {', '.join(debate_transcript.final_unresolved_disagreements) or '(none)'}."
-            )
-            if last.moderator.deciding_tensions:
-                deciding_factor = (
-                    f"Debate moderator identified deciding tension: {last.moderator.deciding_tensions[0]}"
-                )
-
-        return DecisionDossier(
+        return build_mock_dossier(
+            question=question,
+            briefs=briefs,
             run_id=run_id,
-            decision_question=question,
-            decision_type=decision_type,
-            disagreement_resolution=disagreement_resolution,
-            strongest_argument_for=strongest_for,
-            strongest_argument_against=strongest_against,
-            deciding_factor=deciding_factor,
-            confidence_rationale=(
-                f"Confidence is {confidence:.2f} because specialist briefs align on sequencing "
-                "(internal first) but disagree on output quality until real providers are wired."
-            ),
-            assumptions=[
-                "The team can iterate quickly without external customer commitments.",
-                "Structured dossiers will be reviewed by humans before driving major commitments.",
-                "Provider contracts remain stable as OpenAI and later vendors are added.",
-            ],
-            arguments_for=[
-                strongest_for,
-                "Agent roles map cleanly to executive decision workflows.",
-                "Saved JSON/Markdown runs create an audit trail for revisits.",
-            ],
-            arguments_against=[
-                strongest_against,
-                "Manual CLI usage limits adoption until later slice enhancements.",
-                "Single-pass council may miss issues that debate rounds would surface.",
-            ],
-            risks=[
-                "Scope creep into SaaS, auth, or trading features before core engine is stable.",
-                "Overfitting prompts to sample questions instead of general decision quality.",
-                "False confidence if chair synthesis reads more decisive than evidence supports.",
-            ],
-            recommendation=recommendation,
-            confidence_score=confidence,
-            kill_criteria=[
-                "proposed: two consecutive schema-valid dossier runs on representative questions — stop if not met",
-                "proposed: internal stakeholders reference saved runs within one review cycle — stop if not met",
-            ],
-            next_actions=[
-                "Run three real product decisions through mock and OpenAI modes and compare dossiers.",
-                "Add debate rounds only after baseline dossier quality is stable.",
-                "Track disagreement_resolution usefulness with a short reviewer checklist.",
-            ],
-            open_questions=[
-                "Which decisions require multi-round debate versus a single council pass?",
-                "What retention policy should apply to runs stored on disk?",
-                "When should confidence scores block automated downstream actions?",
-            ],
-            evidence_gaps=[
-                "No baseline quality rubric scores comparing mock vs live providers.",
-                "Stakeholder adoption metrics were not provided in the question.",
-            ],
-            proposed_metrics=[
-                "proposed: two consecutive schema-valid dossier runs on representative questions",
-                "proposed: internal stakeholders reference saved runs within one review cycle",
-            ],
-            unsupported_assumptions=[
-                "Assumes the team can iterate without external customer commitments.",
-            ],
+            debate_transcript=debate_transcript,
         )
 
     def _build_brief(
@@ -297,10 +200,6 @@ class MockProvider(LLMProvider):
             msg = f"Mock provider does not generate role: {role}"
             raise ValueError(msg)
         return builder(question, prior_briefs)
-
-    def _mentions_internal_tool(self, question: str) -> bool:
-        lowered = question.lower()
-        return "internal" in lowered or "tool first" in lowered
 
     def _build_debate_round(
         self,

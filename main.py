@@ -43,6 +43,7 @@ from council.smoke import run_smoke
 from council.doctor import run_doctor
 from council.engine import run_council
 from council.implementation_pack import write_implementation_pack
+from council.verdict_quality import ensure_verdict_quality_for_pack
 from council.progress import ConsoleProgressReporter, NullProgressReporter
 from council.prompt_debug import save_prompt_debug
 from council.run_catalog import RunNotFoundError, get_run_summary
@@ -269,6 +270,7 @@ def _council_command(args, console: Console, error_console: Console) -> int:
         if request.prompt_create_pack and not create_pack:
             create_pack = Confirm.ask("Create implementation pack?", default=False)
         if create_pack:
+            ensure_verdict_quality_for_pack(session.result.dossier)
             run_dir = settings.runs_dir / session.result.dossier.run_id
             run_dir.mkdir(parents=True, exist_ok=True)
             pack_paths = write_implementation_pack(run_dir, session.result)

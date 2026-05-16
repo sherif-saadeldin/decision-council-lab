@@ -4,6 +4,7 @@ from pathlib import Path
 
 from council.models import CouncilRunResult
 from council.preset_economics import get_preset_economics
+from council.verdict_quality import decision_label, format_verdict_sections_markdown
 from council.markdown_format import (
     bullet_section,
     format_agent_brief_markdown,
@@ -88,18 +89,15 @@ def _format_debate_section(lines: list[str], result: CouncilRunResult) -> None:
 def _format_chair_verdict(lines: list[str], result: CouncilRunResult) -> None:
     dossier = result.dossier
     confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type = dossier.decision_type.value.replace("_", " ")
 
     lines.extend(
         [
             "",
             "## Chair Verdict",
             "",
-            f"**Decision type:** {decision_type}",
-            "",
-            f"**Recommendation:** {dossier.recommendation}",
-            "",
             f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
+            "",
+            f"**Executive summary:** {dossier.recommendation}",
             "",
             f"**Deciding factor:** {dossier.deciding_factor}",
             "",
@@ -113,9 +111,9 @@ def _format_chair_verdict(lines: list[str], result: CouncilRunResult) -> None:
             "",
         ]
     )
+    format_verdict_sections_markdown(lines, dossier)
     bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
     bullet_section(lines, "Kill Criteria", dossier.kill_criteria)
-    bullet_section(lines, "Next Actions", dossier.next_actions)
     bullet_section(lines, "Open Questions", dossier.open_questions)
     proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)
     bullet_section(lines, "Unsupported Assumptions", dossier.unsupported_assumptions)
@@ -160,12 +158,17 @@ def format_council_run_markdown(
     dossier = result.dossier
     meta = result.provider_metadata
     confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type = dossier.decision_type.value.replace("_", " ")
+    decision_label_text = decision_label(dossier.decision_type)
     multi_label = "yes" if result.multi_model else "no (role-play)"
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
 
     routing_label = result.routing_mode or "economy"
     lines = [
         f"# Council Session — {_question_title(dossier.decision_question)}",
+        "",
+        "## Direct Answer",
+        "",
+        direct,
         "",
         "## Council Session Summary",
         "",
@@ -176,7 +179,7 @@ def format_council_run_markdown(
         f"- **Multi-model debate:** {multi_label}",
         f"- **Schema version:** {result.schema_version}",
         "",
-        f"**Verdict:** {decision_type} — {dossier.recommendation.split(chr(10), 1)[0]}",
+        f"**Decision:** {decision_label_text}",
         "",
         f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
         "",

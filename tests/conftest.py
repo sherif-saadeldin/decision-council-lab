@@ -119,10 +119,14 @@ def assert_proposed_metrics_labeled(metrics: list[str]) -> None:
 
 def assert_mock_run_schema(result: CouncilRunResult) -> None:
     """Structural guardrail checks for mock council output."""
+    from council.verdict_quality import is_verdict_quality_sufficient
+
     assert result.provider_metadata.provider_name == "mock"
     assert result.provider_metadata.mode == "mock"
     assert result.dossier.decision_type is not None
     assert result.dossier.recommendation
+    assert result.dossier.direct_answer.strip()
+    assert is_verdict_quality_sufficient(result.dossier)
     assert_proposed_metrics_labeled(result.dossier.proposed_metrics)
     for brief in result.agent_briefs:
         assert_proposed_metrics_labeled(brief.proposed_metrics)

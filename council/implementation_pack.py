@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from council.models import CouncilRunResult
+from council.verdict_quality import ensure_verdict_quality_for_pack
 
 PROJECT_NAME = "decision-council-lab"
 
@@ -33,17 +34,24 @@ def _checkbox_lines(items: list[str]) -> list[str]:
 
 def _pack_header_lines(result: CouncilRunResult) -> list[str]:
     dossier = result.dossier
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
     return [
         f"**Project:** {PROJECT_NAME}",
         f"**Decision question:** {dossier.decision_question}",
         f"**Source run ID:** `{dossier.run_id}`",
+        f"**Direct answer:** {direct}",
         f"**Verdict:** {dossier.decision_type.value.replace('_', ' ')}",
         f"**Confidence:** {dossier.confidence_score:.0%} ({dossier.confidence_score:.2f})",
+        f"**Approval gate:** {dossier.approval_gate}",
         "",
     ]
 
 
 def _scope_boundary_lines(dossier) -> list[str]:
+    out_scope = dossier.do_not_do[:5] if dossier.do_not_do else [
+        "Features not listed in this pack or council dossier",
+        "Provider additions, auth, frontend, or infrastructure not requested in the verdict",
+    ]
     return [
         "## Scope boundaries",
         "",
@@ -53,8 +61,7 @@ def _scope_boundary_lines(dossier) -> list[str]:
         "",
         "**Out of scope (unless re-approved)**",
         "",
-        "- Features not listed in this pack or council dossier",
-        "- Provider additions, auth, frontend, or infrastructure not requested in the verdict",
+        *_bullet_lines(out_scope),
         "",
     ]
 
@@ -94,6 +101,7 @@ def _model_assignment_lines(result: CouncilRunResult) -> list[str]:
 
 
 def write_implementation_pack(run_dir: Path, result: CouncilRunResult) -> list[Path]:
+    ensure_verdict_quality_for_pack(result.dossier)
     dossier = result.dossier
     header = _pack_header_lines(result)
     scope = _scope_boundary_lines(dossier)

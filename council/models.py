@@ -92,6 +92,11 @@ class DecisionDossier(BaseModel):
     arguments_against: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     recommendation: str = ""
+    direct_answer: str = ""
+    why_this_decision: list[str] = Field(default_factory=list)
+    what_would_change_mind: list[str] = Field(default_factory=list)
+    do_not_do: list[str] = Field(default_factory=list)
+    approval_gate: str = ""
     confidence_score: float = Field(ge=0.0, le=1.0, default=0.0)
     kill_criteria: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
@@ -101,7 +106,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.5"
+RUN_SCHEMA_VERSION = "1.6"
 
 
 class RoleAssignmentRecord(BaseModel):

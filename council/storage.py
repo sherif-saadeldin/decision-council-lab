@@ -13,22 +13,27 @@ from council.markdown_format import (
     proposed_metrics_section,
 )
 from council.models import CouncilRunResult
+from council.verdict_quality import decision_label, format_verdict_sections_markdown
 
 
 def _format_markdown(result: CouncilRunResult) -> str:
     dossier = result.dossier
     meta = result.provider_metadata
     confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type_label = dossier.decision_type.value.replace("_", " ")
 
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
     lines = [
         "# Decision Council Dossier",
+        "",
+        "## Direct Answer",
+        "",
+        direct,
         "",
         "## Executive Summary",
         "",
         dossier.recommendation,
         "",
-        f"**Decision type:** {decision_type_label}",
+        f"**Decision:** {decision_label(dossier.decision_type)}",
         f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
     ]
 
@@ -52,6 +57,7 @@ def _format_markdown(result: CouncilRunResult) -> str:
             "",
         ]
     )
+    format_verdict_sections_markdown(lines, dossier)
 
     bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
     proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)

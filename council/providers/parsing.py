@@ -61,6 +61,11 @@ class _DossierPayload(BaseModel):
     arguments_against: list[str]
     risks: list[str]
     recommendation: str
+    direct_answer: str = ""
+    why_this_decision: list[str] = Field(default_factory=list)
+    what_would_change_mind: list[str] = Field(default_factory=list)
+    do_not_do: list[str] = Field(default_factory=list)
+    approval_gate: str = ""
     confidence_score: float = Field(ge=0.0, le=1.0)
     kill_criteria: list[str]
     next_actions: list[str]
@@ -230,6 +235,13 @@ def parse_dossier_payload(
         arguments_against=parsed.arguments_against,
         risks=parsed.risks,
         recommendation=parsed.recommendation.strip(),
+        direct_answer=parsed.direct_answer.strip(),
+        why_this_decision=[item.strip() for item in parsed.why_this_decision if item.strip()],
+        what_would_change_mind=[
+            item.strip() for item in parsed.what_would_change_mind if item.strip()
+        ],
+        do_not_do=[item.strip() for item in parsed.do_not_do if item.strip()],
+        approval_gate=parsed.approval_gate.strip(),
         confidence_score=parsed.confidence_score,
         kill_criteria=parsed.kill_criteria,
         next_actions=parsed.next_actions,
