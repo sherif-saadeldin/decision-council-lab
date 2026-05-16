@@ -146,6 +146,28 @@ class OpenAICompatibleProvider(LLMProvider):
             update={"api_mode_used": self._api_mode_locked},
         )
 
+    def live_ping(self) -> tuple[bool, str | None]:
+        from council.live_completion import (
+            LIVE_PING_INSTRUCTIONS,
+            LIVE_PING_SCHEMA,
+            LIVE_PING_USER_PROMPT,
+            validate_ping_json,
+        )
+
+        try:
+            raw = self._call_structured_json(
+                instructions=LIVE_PING_INSTRUCTIONS,
+                user_content=LIVE_PING_USER_PROMPT,
+                schema_name="live_ping",
+                schema=LIVE_PING_SCHEMA,
+                fast_mode=True,
+            )
+            return validate_ping_json(raw)
+        except ProviderResponseError as exc:
+            return False, exc.detail
+        except Exception as exc:  # noqa: BLE001
+            return False, type(exc).__name__
+
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         started = time.perf_counter()
         instructions = agent_instructions(request.role)

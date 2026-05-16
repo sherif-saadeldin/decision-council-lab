@@ -26,6 +26,10 @@ class LLMProvider(ABC):
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         raise NotImplementedError
 
+    def live_ping(self) -> tuple[bool, str | None]:
+        """Minimal live completion check. Returns (ok, failure_reason)."""
+        return False, "Live completion not supported for this provider."
+
     def generate_brief(
         self,
         role: AgentRole,

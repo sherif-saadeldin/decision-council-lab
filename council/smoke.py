@@ -16,6 +16,7 @@ from council.progress import NullProgressReporter, StageTrackingProgress
 from council.providers.errors import ProviderResponseError
 from council.providers.failures import classify_provider_failure
 from council.credentials import redaction_secrets, strip_ollama_dummy_from_text
+from council.provider_availability import credential_source_for_preset
 from council.redaction import redact_secrets
 from council.providers.api_mode import normalize_api_mode
 from council.runtime import DEFAULT_SMOKE_MAX_RUN_SECONDS, DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
@@ -61,6 +62,8 @@ class SmokeReport(BaseModel):
     failed_stage: str | None = None
     api_mode_preference: str | None = None
     api_mode_used: str | None = None
+    auth_failure: bool = False
+    credential_source: str | None = None
 
 
 def run_smoke_preflight(
@@ -157,6 +160,11 @@ def run_smoke(
     except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - started
         settings_for_redaction = settings or _resolve_smoke_settings(request)
+        failure_reason = classify_provider_failure(exc)
+        auth_failure = failure_reason == "auth_failure"
+        cred_source: str | None = None
+        if auth_failure:
+            cred_source = credential_source_for_preset(request.preset, settings_for_redaction)
         return SmokeReport(
             success=False,
             preset=request.preset,
@@ -165,9 +173,11 @@ def run_smoke(
             model_name=preset_meta.model,
             elapsed_seconds=elapsed,
             error=_safe_error_message(exc, settings_for_redaction),
-            failure_reason=classify_provider_failure(exc),
+            failure_reason=failure_reason,
             failed_stage=progress.current_stage,
             api_mode_preference=normalize_api_mode(request.api_mode),
+            auth_failure=auth_failure,
+            credential_source=cred_source,
         )
 
 

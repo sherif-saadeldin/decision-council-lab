@@ -361,6 +361,27 @@ uv run python main.py council "Question?" --allow-over-budget   # bypass caps
 
 Cost metadata lives in `council/preset_economics.py` (`cost_tier`, `estimated_cost_per_call_usd`). Estimates appear in CLI output and council `run.md`.
 
+### Provider validation (Slice 5.4.1)
+
+```bash
+# Initialize provider only (no completion)
+uv run python main.py doctor --preset openrouter-sonnet --live
+
+# One minimal live JSON completion (15s timeout; no secrets in output)
+uv run python main.py doctor --preset openrouter-sonnet --live-completion
+
+# Council: skip hosted chair when LLM_API_KEY is missing (falls back to mock)
+uv run python main.py council "Question?" --routing-mode economy
+
+# Council: require live completion for every hosted preset before run
+uv run python main.py council "Question?" --routing-mode balanced --require-live-providers
+
+# Dry-run shows credential source + availability per preset
+uv run python main.py council "Question?" --dry-run-cost
+```
+
+Automatic routing (`economy`, `balanced`, `premium`) falls back to **mock chair** when a hosted chair preset needs `LLM_API_KEY` but the key is missing — with warning: `Hosted chair unavailable; falling back to mock.` No live network calls unless you pass `--require-live-providers`.
+
 Per-role routing (overrides `--council-presets` when set):
 
 ```bash

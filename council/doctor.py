@@ -19,6 +19,7 @@ from council.ollama_probe import (
 from council.providers.api_mode import CHAT_PREFERRED_PROVIDERS, resolve_effective_api_mode
 from council.secrets import credential_source
 from council.models import RUN_SCHEMA_VERSION
+from council.live_completion import run_live_completion_check
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
 from council.runtime import RuntimeOptions
 from council.version import APP_VERSION
@@ -60,9 +61,11 @@ def run_doctor(
     settings: Settings,
     *,
     live: bool = False,
+    live_completion: bool = False,
     http_probe: Callable[[str, float], tuple[bool, str]] | None = None,
     tags_fetcher: TagsFetcher | None = None,
     runtime: RuntimeOptions | None = None,
+    live_completion_fn=None,
 ) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
     probe = http_probe or _default_http_probe
@@ -121,6 +124,23 @@ def run_doctor(
                 name="live",
                 status=CheckStatus.SKIP,
                 message="Skipped live API validation (use --live to enable).",
+            )
+        )
+
+    if live_completion:
+        checks.append(
+            _live_completion_check(
+                settings,
+                runtime=runtime,
+                completion_fn=live_completion_fn,
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                name="live_completion",
+                status=CheckStatus.SKIP,
+                message="Skipped live completion (use --live-completion to enable).",
             )
         )
 
@@ -256,6 +276,31 @@ def _api_mode_check(settings: Settings, runtime: RuntimeOptions | None) -> Docto
     else:
         detail = f"preference={preference!r} (auto tries Responses API, may fall back to chat)"
     return DoctorCheck(name="api_mode", status=CheckStatus.OK, message=detail)
+
+
+def _live_completion_check(
+    settings: Settings,
+    *,
+    runtime: RuntimeOptions | None,
+    completion_fn=None,
+) -> DoctorCheck:
+    options = runtime or RuntimeOptions(timeout_seconds=15.0, max_retries=0)
+    ok, reason = run_live_completion_check(
+        settings,
+        options,
+        live_ping_fn=completion_fn,
+    )
+    if ok:
+        return DoctorCheck(
+            name="live_completion",
+            status=CheckStatus.OK,
+            message="Live completion ok (minimal JSON ping).",
+        )
+    return DoctorCheck(
+        name="live_completion",
+        status=CheckStatus.FAIL,
+        message=f"Live completion failed: {reason or 'unknown error'}",
+    )
 
 
 def _live_provider_check(

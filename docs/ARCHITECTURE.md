@@ -106,6 +106,18 @@ Before a council run: `plan_council_session()` builds routing + cost estimate. `
 
 Explicit `--council-presets` or `--*-preset` flags keep your slot assignment; routing mode still sets debate defaults unless `--debate-rounds` is set.
 
+### Live validation & availability (Slice 5.4.1)
+
+| Surface | Behavior |
+|---------|----------|
+| `doctor --live-completion` | Minimal JSON ping via `live_ping()`; reports ok/fail without raw payload or keys |
+| `council --require-live-providers` | Live ping each hosted preset before run; fails with `HostedProviderUnavailableError` |
+| Auto routing guards | Missing `LLM_API_KEY` for hosted chair → mock chair + warning (no network unless `--require-live-providers`) |
+| `council --dry-run-cost` | Shows credential source and availability: available / missing key / live unchecked |
+| `smoke` auth failures | Sets `auth_failure`, `credential_source` (env/keyring/missing) on report |
+
+Modules: `council/live_completion.py`, `council/provider_availability.py`.
+
 ### Council usability (Slice 5.3)
 
 - **run.md (council):** `Council Session Summary` → role/model table → debate rounds → chair verdict → implementation pack files → next suggested `runs show` command.

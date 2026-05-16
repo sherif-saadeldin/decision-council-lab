@@ -6,6 +6,7 @@ from council.config import Settings
 from council.model_presets import apply_preset, preset_role_metadata
 from council.providers.factory import create_provider
 from council.providers.models import ProviderMetadata
+from council.provider_availability import apply_auto_routing_guards
 from council.routing_modes import (
     has_explicit_slot_presets,
     slot_presets_for_mode,
@@ -49,6 +50,7 @@ class CouncilRouting:
     role_play_warning: str | None
     routing_mode: str = "economy"
     auto_routed: bool = False
+    routing_warnings: tuple[str, ...] = ()
 
     def preset_for(self, slot: str) -> str:
         return self.assignments[slot].preset
@@ -135,6 +137,14 @@ def build_council_routing(
         slot_presets = slot_presets_for_mode(routing_mode)
         auto_routed = True
 
+    routing_warnings: list[str] = []
+    if auto_routed:
+        slot_presets, guard_warnings = apply_auto_routing_guards(
+            slot_presets,
+            base_settings or Settings.from_env(),
+        )
+        routing_warnings.extend(guard_warnings)
+
     assignments: dict[str, RoleAssignment] = {}
     for slot, preset_name in slot_presets.items():
         provider_name, model_name, mode = preset_role_metadata(preset_name)
@@ -156,6 +166,7 @@ def build_council_routing(
         role_play_warning=warning,
         routing_mode=routing_mode,
         auto_routed=auto_routed,
+        routing_warnings=tuple(routing_warnings),
     )
 
 

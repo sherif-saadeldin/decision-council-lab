@@ -72,7 +72,12 @@ def main(argv: list[str] | None = None) -> int:
         try:
             settings = resolve_settings(args)
             runtime = resolve_runtime_options(args)
-            checks = run_doctor(settings, live=bool(args.live), runtime=runtime)
+            checks = run_doctor(
+                settings,
+                live=bool(args.live),
+                live_completion=bool(getattr(args, "live_completion", False)),
+                runtime=runtime,
+            )
             return render_doctor(console, checks)
         except KNOWN_PROJECT_ERRORS as exc:
             render_known_error(error_console, exc, quiet=False)
@@ -242,7 +247,12 @@ def _council_command(args, console: Console, error_console: Console) -> int:
             allow_over_budget=request.allow_over_budget,
         )
         if request.dry_run_cost:
-            render_cost_estimate(console, plan.cost_estimate, routing=plan.routing)
+            render_cost_estimate(
+                console,
+                plan.cost_estimate,
+                routing=plan.routing,
+                preset_availability=plan.preset_availability,
+            )
             return 0
 
         runtime = request.runtime or resolve_runtime_options(args)
@@ -278,6 +288,7 @@ def _council_command(args, console: Console, error_console: Console) -> int:
             role_play_warning=session.role_play_warning,
             pack_paths=pack_paths,
             cost_estimate=session.cost_estimate,
+            routing_warnings=list(plan.routing.routing_warnings),
         )
         return 0
     except KNOWN_PROJECT_ERRORS as exc:

@@ -11,6 +11,7 @@ from rich.table import Table
 
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
 from council.costing import CouncilBudgetExceededError
+from council.provider_availability import HostedProviderUnavailableError
 from council.council_session import CouncilSessionRequest
 from council.role_routing import CouncilRouting, parse_council_preset_list
 from council.run_catalog import RunNotFoundError, list_recent_runs
@@ -66,6 +67,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
     RunNotFoundError,
     CouncilBudgetExceededError,
+    HostedProviderUnavailableError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -124,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="Initialize provider (no completion call) to validate setup.",
+    )
+    doctor_parser.add_argument(
+        "--live-completion",
+        action="store_true",
+        help="Run one minimal live completion (JSON ping); short timeout.",
     )
     _add_profile_argument(doctor_parser)
     _add_api_mode_argument(doctor_parser)
@@ -248,6 +255,11 @@ def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
         "--allow-over-budget",
         action="store_true",
         help="Run even when --max-cost-usd or --max-llm-calls would block.",
+    )
+    parser.add_argument(
+        "--require-live-providers",
+        action="store_true",
+        help="Validate hosted presets with a live completion before running council.",
     )
     for slot in (
         "researcher",
@@ -488,6 +500,7 @@ def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
         max_debate_rounds=getattr(args, "max_debate_rounds", None),
         dry_run_cost=bool(getattr(args, "dry_run_cost", False)),
         allow_over_budget=bool(getattr(args, "allow_over_budget", False)),
+        require_live_providers=bool(getattr(args, "require_live_providers", False)),
         create_pack=bool(getattr(args, "create_pack", False) or getattr(args, "yes_pack", False)),
         prompt_create_pack=not bool(getattr(args, "yes_pack", False) or getattr(args, "create_pack", False)),
         runtime=runtime,
@@ -774,6 +787,7 @@ def render_cost_estimate(
     estimate,
     *,
     routing: CouncilRouting | None = None,
+    preset_availability=None,
 ) -> None:
     table = Table(title="Council cost estimate (conservative; not live billing)")
     table.add_column("Field", style="bold")
@@ -804,6 +818,25 @@ def render_cost_estimate(
             usd = f"${line.estimated_usd:.4f}" if line else "—"
             route_table.add_row(slot, assignment.preset, tier, calls, usd)
         console.print(route_table)
+        for warning in routing.routing_warnings:
+            console.print(f"[yellow]{warning}[/yellow]")
+
+    if preset_availability:
+        avail_table = Table(title="Preset availability (estimate)")
+        avail_table.add_column("Preset")
+        avail_table.add_column("Credential source")
+        avail_table.add_column("Availability")
+        seen: set[str] = set()
+        for item in preset_availability:
+            if item.preset in seen:
+                continue
+            seen.add(item.preset)
+            avail_table.add_row(
+                item.preset,
+                item.credential_source,
+                item.display_availability(),
+            )
+        console.print(avail_table)
 
 
 def render_council_result(
@@ -816,6 +849,7 @@ def render_council_result(
     role_play_warning: str | None = None,
     pack_paths: list[Path] | None = None,
     cost_estimate=None,
+    routing_warnings: list[str] | None = None,
 ) -> None:
     dossier = result.dossier
     run_id = dossier.run_id
@@ -833,6 +867,10 @@ def render_council_result(
 
     if role_play_warning:
         console.print(f"[yellow]{role_play_warning}[/yellow]\n")
+    for warning in routing_warnings or []:
+        console.print(f"[yellow]{warning}[/yellow]")
+    if routing_warnings:
+        console.print()
 
     console.print(
         Panel.fit(
@@ -962,6 +1000,9 @@ def render_smoke_report(console: Console, report: SmokeReport) -> None:
         if report.failure_reason:
             table.add_row("Failure reason", report.failure_reason)
         table.add_row("Error", report.error or "Unknown error")
+        if report.auth_failure:
+            table.add_row("Auth failure", "yes")
+            table.add_row("Credential source", report.credential_source or "missing")
     console.print(table)
 
 

@@ -47,6 +47,11 @@ class MockProvider(LLMProvider):
     def metadata(self) -> ProviderMetadata:
         return self._metadata
 
+    def live_ping(self) -> tuple[bool, str | None]:
+        from council.live_completion import validate_ping_json
+
+        return validate_ping_json('{"ok": true}')
+
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         started = time.perf_counter()
         instructions = agent_instructions(request.role)

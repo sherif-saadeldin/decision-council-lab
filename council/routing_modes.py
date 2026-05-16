@@ -10,6 +10,10 @@ RoutingMode = Literal["economy", "balanced", "premium", "manual"]
 ROUTING_MODES: tuple[str, ...] = ("economy", "balanced", "premium", "manual")
 DEFAULT_ROUTING_MODE: RoutingMode = "economy"
 
+HOSTED_CHAIR_FALLBACK_WARNING = (
+    "Hosted chair unavailable; falling back to mock."
+)
+
 # Fixed maps for deterministic routing (cheapest viable presets).
 ECONOMY_SLOT_PRESETS: dict[str, str] = {
     "researcher": "mock",

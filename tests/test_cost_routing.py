@@ -14,14 +14,14 @@ from council.storage import save_run
 from main import main
 
 
-def test_economy_routing_uses_free_tier_for_non_chair() -> None:
+def test_economy_routing_uses_free_tier_for_non_chair(isolated_env: None) -> None:
     routing = build_council_routing(routing_mode="economy")
     assert routing.auto_routed is True
     for slot in ("researcher", "advocate", "skeptic", "risk", "operator"):
+        assert routing.preset_for(slot) == "mock"
         tier = get_preset_economics(routing.preset_for(slot)).cost_tier
         assert tier in ("free", "cheap")
-    chair_tier = get_preset_economics(routing.preset_for("chair")).cost_tier
-    assert chair_tier in ("free", "cheap", "medium")
+    assert routing.preset_for("chair") == "mock"
 
 
 def test_economy_slot_map_matches_helpers() -> None:

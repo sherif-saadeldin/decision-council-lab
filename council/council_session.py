@@ -6,6 +6,10 @@ from uuid import uuid4
 
 from council.config import Settings
 from council.costing import CouncilCostEstimate, estimate_council_cost
+from council.provider_availability import (
+    build_preset_availability_for_routing,
+    validate_hosted_presets_live,
+)
 from council.models import (
     AgentBrief,
     AgentRole,
@@ -40,6 +44,7 @@ DEFAULT_COUNCIL_DEBATE_ROUNDS = 1
 class CouncilSessionRequest:
     question: str
     routing_mode: str = "economy"
+    require_live_providers: bool = False
     council_presets: list[str] | None = None
     researcher_preset: str | None = None
     advocate_preset: str | None = None
@@ -64,6 +69,7 @@ class CouncilSessionPlan:
     routing: CouncilRouting
     cost_estimate: CouncilCostEstimate
     debate_rounds: int
+    preset_availability: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -96,10 +102,19 @@ def plan_council_session(request: CouncilSessionRequest) -> CouncilSessionPlan:
         routing_mode=request.routing_mode,
         debate_rounds=request.debate_rounds,
     )
+    availability = build_preset_availability_for_routing(routing, base)
+    if request.require_live_providers:
+        unique_presets = sorted({assignment.preset for assignment in routing.assignments.values()})
+        validate_hosted_presets_live(
+            unique_presets,
+            base,
+            runtime,
+        )
     return CouncilSessionPlan(
         routing=routing,
         cost_estimate=estimate,
         debate_rounds=request.debate_rounds,
+        preset_availability=availability,
     )
 
 
