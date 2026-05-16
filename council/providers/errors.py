@@ -29,6 +29,20 @@ class MissingProviderCredentialError(ValueError):
         super().__init__(message)
 
 
+class MissingProviderConfigError(ValueError):
+    """Raised when a provider mode is missing required non-secret configuration."""
+
+    def __init__(self, provider_name: str, setting_name: str) -> None:
+        self.provider_name = provider_name
+        self.setting_name = setting_name
+        message = (
+            f"Missing required setting {setting_name} "
+            f"for provider {provider_name!r}. "
+            "Set the variable in your environment or .env file."
+        )
+        super().__init__(message)
+
+
 class ProviderResponseError(RuntimeError):
     """Raised when provider API calls fail or output cannot be parsed."""
 

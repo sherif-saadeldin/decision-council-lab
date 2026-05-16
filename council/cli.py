@@ -10,6 +10,7 @@ from rich.table import Table
 from council.config import Settings
 from council.models import CouncilRunResult
 from council.providers.errors import (
+    MissingProviderConfigError,
     MissingProviderCredentialError,
     ProviderResponseError,
     UnsupportedProviderModeError,
@@ -17,6 +18,7 @@ from council.providers.errors import (
 
 KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     MissingProviderCredentialError,
+    MissingProviderConfigError,
     UnsupportedProviderModeError,
     ProviderResponseError,
 )
@@ -64,6 +66,10 @@ def resolve_settings(args: argparse.Namespace) -> Settings:
         mock_model=base.mock_model,
         openai_api_key=base.openai_api_key,
         openai_model=base.openai_model,
+        llm_provider_name=base.llm_provider_name,
+        llm_base_url=base.llm_base_url,
+        llm_api_key=base.llm_api_key,
+        llm_model=base.llm_model,
     )
 
 

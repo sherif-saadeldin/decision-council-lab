@@ -46,23 +46,30 @@ Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argum
 
 Shared prompts: `council/prompts.py` (used by mock and OpenAI).
 
-### Supported modes (Slice 2)
+### Supported modes (Slice 3)
 
 | Mode | Implementation | Notes |
 |------|----------------|-------|
 | `mock` | `MockProvider` | Deterministic, no API key |
-| `openai` | `OpenAIProvider` | Responses API + strict JSON schema |
+| `openai` | `OpenAIProvider` | OpenAI direct (`OpenAICompatibleProvider` wrapper) |
+| `openai_compatible` | `OpenAICompatibleProvider` | Any OpenAI-compatible HTTP API |
 
-Other `LLM_MODE` values raise `UnsupportedProviderModeError`. Missing `OPENAI_API_KEY` for OpenAI mode raises `MissingProviderCredentialError`.
+Other `LLM_MODE` values raise `UnsupportedProviderModeError`.
 
-### OpenAI provider (Slice 2)
+Configuration errors:
 
-- Uses `openai` Python SDK (`client.responses.create`)
-- Structured JSON via `text.format.type = json_schema` with `strict: true`
-- Parses agent briefs and chair dossiers with Pydantic guards
-- Raises `ProviderResponseError` on malformed model output (no silent fallback)
+- `OPENAI_API_KEY` required for `openai` mode
+- `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` required for `openai_compatible` mode
+- `LLM_PROVIDER_NAME` sets metadata `provider_name` (e.g. `openrouter`, `groq`)
+
+### OpenAI-compatible stack (Slice 2 + 3)
+
+- Shared implementation: `OpenAICompatibleProvider` in `council/providers/openai_compatible.py`
+- `OpenAIProvider` subclasses/wraps it for backward-compatible `LLM_MODE=openai`
+- Uses `openai` Python SDK with optional `base_url` for third-party gateways
+- Structured JSON via Responses API + strict `json_schema`
+- Safe errors via `openai_errors.py` (provider-name-aware, no raw payloads or key fragments)
 - Streaming disabled (`supports_streaming = false`)
-- API keys are redacted from error messages and never stored in artifacts
 
 ## Run artifacts
 

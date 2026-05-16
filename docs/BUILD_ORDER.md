@@ -7,8 +7,9 @@ Slice 2 — OpenAI provider (done)
 Slice 2.1 — Output quality hardening (done)
 Slice 2.2 — Provider error hardening (done)
 Slice 2.3 — CLI graceful error handling (done)
-Slice 3 — Anthropic/Gemini providers
-Slice 4 — Debate rounds
-Slice 5 — Memory/revisit system
-Slice 6 — CLI enhancements
-Slice 7 — UI integration later
+Slice 3 — OpenAI-compatible provider abstraction (done)
+Slice 4 — Anthropic/Gemini native SDK providers
+Slice 5 — Debate rounds
+Slice 6 — Memory/revisit system
+Slice 7 — CLI enhancements
+Slice 8 — UI integration later

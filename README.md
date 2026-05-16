@@ -12,9 +12,13 @@ Copy `.env.example` to `.env` and configure as needed:
 
 | Variable | Purpose |
 |----------|---------|
-| `LLM_MODE` | `mock` (default) or `openai` |
+| `LLM_MODE` | `mock` (default), `openai`, or `openai_compatible` |
 | `OPENAI_API_KEY` | Required when `LLM_MODE=openai` |
 | `DEFAULT_MODEL_OPENAI` | OpenAI model id (default `gpt-4.1-mini`) |
+| `LLM_PROVIDER_NAME` | Label for compatible provider (e.g. `openrouter`) |
+| `LLM_BASE_URL` | Base URL for `openai_compatible` (e.g. OpenRouter API root) |
+| `LLM_API_KEY` | API key for `openai_compatible` |
+| `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
 ## Run (mock mode)
@@ -41,6 +45,32 @@ uv run python main.py "Should I build a decision council engine as an internal t
 
 Or set values in `.env` and run the same `main.py` command.
 
+## Run (OpenAI-compatible — OpenRouter, Groq, Together, etc.)
+
+Uses the same code path as OpenAI direct, with a custom `base_url`:
+
+```bash
+# PowerShell — OpenRouter example
+$env:LLM_MODE = "openai_compatible"
+$env:LLM_PROVIDER_NAME = "openrouter"
+$env:LLM_BASE_URL = "https://openrouter.ai/api/v1"
+$env:LLM_API_KEY = "your-openrouter-key"
+$env:LLM_MODEL = "anthropic/claude-sonnet-4.5"
+uv run python main.py "Your decision question"
+```
+
+```bash
+# bash
+export LLM_MODE=openai_compatible
+export LLM_PROVIDER_NAME=openrouter
+export LLM_BASE_URL=https://openrouter.ai/api/v1
+export LLM_API_KEY=your-openrouter-key
+export LLM_MODEL=anthropic/claude-sonnet-4.5
+uv run python main.py "Your decision question"
+```
+
+Swap `LLM_BASE_URL` and `LLM_MODEL` for Groq, Together, Fireworks, DeepInfra, or other OpenAI-compatible endpoints.
+
 ### CLI options
 
 ```bash
@@ -65,22 +95,25 @@ Each council run is saved under `runs/<run_id>/`:
 ## Provider contract
 
 - `LLMProvider.complete(ProviderRequest) → ProviderResponse` is the integration point.
-- Supported modes: `mock`, `openai` (`SUPPORTED_LLM_MODES`).
-- OpenAI uses the Responses API with strict JSON schema output; malformed output raises `ProviderResponseError`.
-- API keys are never written to logs, artifacts, or error messages.
+- Supported modes: `mock`, `openai`, `openai_compatible`.
+- `openai` and `openai_compatible` share `OpenAICompatibleProvider` (Responses API + strict JSON schema).
+- `openai_compatible` sets `metadata.provider_name` from `LLM_PROVIDER_NAME`.
+- API keys and endpoint secrets are never written to logs, artifacts, or error messages.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full contract.
 
-## Troubleshooting (OpenAI)
+## Troubleshooting (providers)
 
 Controlled provider errors print a **single clean message** (no Python traceback). Use `--quiet` for a one-line error on stderr.
 
 | Symptom | What to do |
 |---------|------------|
-| `OpenAI authentication failed. Check OPENAI_API_KEY.` | Invalid or missing key. Set a real key in `.env` or your shell (see below). No key value is ever printed. |
-| `OpenAI rate limit exceeded...` | Wait and retry, or switch to a lower-cost model via `DEFAULT_MODEL_OPENAI`. |
-| `OpenAI request failed due to a network or connection issue.` | Check connectivity, VPN, and firewall rules. |
-| Other `OpenAI API call failed...` | Re-run with `--save-prompt-debug` to inspect prompts (secrets redacted). |
+| `OpenAI authentication failed. Check OPENAI_API_KEY.` | Invalid/missing key for `LLM_MODE=openai`. |
+| `{provider} authentication failed. Check LLM_API_KEY.` | Invalid/missing key for `openai_compatible` (e.g. OpenRouter). |
+| `Missing required setting LLM_BASE_URL` | Set base URL for compatible mode. |
+| `Missing required setting LLM_MODEL` | Set model id for compatible mode. |
+| Rate limit / network messages | Retry, check connectivity, or use a lower-cost model. |
+| Other API call failed | Re-run with `--save-prompt-debug` (secrets redacted). |
 
 ### Run with a real OpenAI key
 
@@ -131,4 +164,4 @@ uv run ruff check .
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 3 (Anthropic/Gemini providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 4 (Anthropic/Gemini native SDK providers).

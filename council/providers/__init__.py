@@ -1,5 +1,6 @@
 from council.providers.base import LLMProvider
 from council.providers.errors import (
+    MissingProviderConfigError,
     MissingProviderCredentialError,
     ProviderResponseError,
     UnsupportedProviderModeError,
@@ -12,12 +13,15 @@ from council.providers.models import (
     ProviderResponse,
     TokenUsage,
 )
+from council.providers.openai_compatible import OpenAICompatibleProvider
 from council.providers.openai_provider import OpenAIProvider
 
 __all__ = [
     "LLMProvider",
+    "MissingProviderConfigError",
     "MissingProviderCredentialError",
     "MockProvider",
+    "OpenAICompatibleProvider",
     "OpenAIProvider",
     "ProviderMetadata",
     "ProviderRequest",
