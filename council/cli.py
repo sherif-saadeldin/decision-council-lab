@@ -10,6 +10,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
+from council.council_session import CouncilSessionRequest
+from council.role_routing import parse_council_preset_list
 from council.config import Settings
 from council.config_profiles import (
     ConfigProfile,
@@ -59,6 +61,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     UnknownSecretNameError,
     CompareConfigError,
     InvalidApiModeError,
+    ValueError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -73,6 +76,7 @@ CLI_COMMANDS = frozenset(
         "benchmark",
         "smoke",
         "setup",
+        "council",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -174,7 +178,91 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    council_parser = subparsers.add_parser(
+        "council",
+        help="Multi-model council: each role may use a different preset/model.",
+    )
+    _add_council_arguments(council_parser)
+
     return parser
+
+
+def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "question",
+        nargs="?",
+        default=None,
+        help="Decision question for the multi-model council.",
+    )
+    parser.add_argument(
+        "--council-presets",
+        metavar="PRESETS",
+        help="Comma-separated presets mapped to council roles (researcher→chair).",
+    )
+    for slot in (
+        "researcher",
+        "advocate",
+        "skeptic",
+        "risk",
+        "operator",
+        "chair",
+    ):
+        parser.add_argument(
+            f"--{slot}-preset",
+            metavar="PRESET_NAME",
+            dest=f"{slot}_preset",
+            help=f"Preset for the {slot} role.",
+        )
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Directory for run artifacts (default: RUNS_DIR env or ./runs).",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Print only artifact paths.",
+    )
+    parser.add_argument(
+        "--debate-rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Multi-model debate rounds (default: 1; use 0 to skip).",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Per-request provider timeout (default: 120).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Retry count for failed provider API calls.",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: concise prompts.",
+    )
+    parser.add_argument(
+        "--create-pack",
+        action="store_true",
+        help="Write implementation_plan.md, task_breakdown.md, cursor_prompt.md, risk_register.md.",
+    )
+    parser.add_argument(
+        "--yes-pack",
+        action="store_true",
+        help="Non-interactive: same as --create-pack (skip prompt).",
+    )
+    _add_repair_json_argument(parser)
+    _add_api_mode_argument(parser)
 
 
 def _add_api_mode_argument(parser: argparse.ArgumentParser) -> None:
@@ -299,6 +387,34 @@ def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
+
+
+def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
+    question = getattr(args, "question", None) or ""
+    presets = parse_council_preset_list(getattr(args, "council_presets", None))
+    base = Settings.from_env()
+    if getattr(args, "runs_dir", None) is not None:
+        base = _settings_with_runs_dir(base, args.runs_dir)
+    runtime = resolve_runtime_options(args)
+    return CouncilSessionRequest(
+        question=question,
+        council_presets=presets or None,
+        researcher_preset=getattr(args, "researcher_preset", None),
+        advocate_preset=getattr(args, "advocate_preset", None),
+        skeptic_preset=getattr(args, "skeptic_preset", None),
+        risk_preset=getattr(args, "risk_preset", None),
+        operator_preset=getattr(args, "operator_preset", None),
+        chair_preset=getattr(args, "chair_preset", None),
+        debate_rounds=(
+            int(args.debate_rounds)
+            if getattr(args, "debate_rounds", None) is not None
+            else 1
+        ),
+        create_pack=bool(getattr(args, "create_pack", False) or getattr(args, "yes_pack", False)),
+        prompt_create_pack=not bool(getattr(args, "yes_pack", False) or getattr(args, "create_pack", False)),
+        runtime=runtime,
+        base_settings=base,
+    )
 
 
 def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
@@ -462,6 +578,20 @@ def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
     )
 
 
+def _settings_with_runs_dir(settings: Settings, runs_dir: Path) -> Settings:
+    return Settings(
+        llm_mode=settings.llm_mode,
+        runs_dir=runs_dir,
+        mock_model=settings.mock_model,
+        openai_api_key=settings.openai_api_key,
+        openai_model=settings.openai_model,
+        llm_provider_name=settings.llm_provider_name,
+        llm_base_url=settings.llm_base_url,
+        llm_api_key=settings.llm_api_key,
+        llm_model=settings.llm_model,
+    )
+
+
 def resolve_debate_rounds(args: argparse.Namespace, runtime: RuntimeOptions) -> int:
     profile = _resolve_selected_profile(args)
     return resolve_debate_rounds_with_profile(
@@ -538,6 +668,57 @@ def render_preset_list(console: Console) -> None:
     console.print(
         "Ollama preset models must match `ollama list` exactly — edit council/model_presets.py if needed."
     )
+
+
+def render_council_result(
+    console: Console,
+    result,
+    json_path: Path,
+    md_path: Path,
+    *,
+    quiet: bool,
+    role_play_warning: str | None = None,
+    pack_paths: list[Path] | None = None,
+) -> None:
+    if quiet:
+        console.print(json_path)
+        console.print(md_path)
+        for path in pack_paths or []:
+            console.print(path)
+        return
+
+    dossier = result.dossier
+    confidence_pct = f"{dossier.confidence_score:.0%}"
+    decision_type = dossier.decision_type.value.replace("_", " ")
+
+    if role_play_warning:
+        console.print(f"[yellow]{role_play_warning}[/yellow]\n")
+
+    console.print(
+        Panel.fit(
+            f"[bold]{dossier.recommendation}[/bold]\n\n"
+            f"Decision type: {decision_type}\n"
+            f"Confidence: {confidence_pct}\n"
+            f"Deciding factor: {dossier.deciding_factor}",
+            title="Multi-Model Council Verdict",
+            border_style="green",
+        )
+    )
+
+    if result.role_assignments:
+        table = Table(title="Models per role")
+        table.add_column("Role", style="bold")
+        table.add_column("Preset")
+        table.add_column("Provider")
+        table.add_column("Model")
+        for item in result.role_assignments:
+            table.add_row(item.slot, item.preset, item.provider_name, item.model_name)
+        console.print(table)
+
+    console.print(f"\n[green]Saved JSON:[/green] {json_path}")
+    console.print(f"[green]Saved Markdown:[/green] {md_path}")
+    for path in pack_paths or []:
+        console.print(f"[green]Pack artifact:[/green] {path}")
 
 
 def render_smoke_report(console: Console, report: SmokeReport) -> None:

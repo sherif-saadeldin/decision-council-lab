@@ -4,9 +4,12 @@ import json
 import time
 
 from council.debate_prompts import (
+    ADVOCATE_INSTRUCTIONS,
+    SKEPTIC_INSTRUCTIONS,
     debate_round_instructions,
     format_debate_round_user_prompt,
 )
+from council.debate_runner import PositionKind
 from council.models import (
     AgentBrief,
     AgentRole,
@@ -96,6 +99,54 @@ class MockProvider(LLMProvider):
             prior_rounds=prior_rounds,
             round_number=round_number,
         )
+
+    def generate_debate_position(
+        self,
+        *,
+        kind: PositionKind,
+        question: str,
+        briefs: list[AgentBrief],
+        run_id: str,
+        round_number: int,
+        total_rounds: int,
+        prior_rounds: list[DebateRound],
+        advocate_argument: str = "",
+        skeptic_argument: str = "",
+        debug_collector: PromptDebugCollector | None = None,
+    ) -> DebatePosition:
+        if kind == "risk_officer":
+            position = DebatePosition(
+                role=DebateRole.SKEPTIC,
+                argument=(
+                    f"[{self.metadata.model_name}] Risk challenges advocate and skeptic: "
+                    "second-order execution drag and false confidence from polished dossiers "
+                    "must be weighed before proceeding."
+                ),
+                cited_roles=["risk", "skeptic"],
+                responds_to_prior=(
+                    f"Advocate: {advocate_argument[:200]} | Skeptic: {skeptic_argument[:200]}"
+                ),
+                uncertainty="Whether mitigations are feasible within the stated constraints.",
+            )
+        else:
+            full_round = self._build_debate_round(
+                question=question,
+                briefs=briefs,
+                prior_rounds=prior_rounds,
+                round_number=round_number,
+            )
+            position = full_round.advocate if kind == "advocate" else full_round.skeptic
+            position = position.model_copy(
+                update={"argument": f"[{self.metadata.model_name}] {position.argument}"}
+            )
+        if debug_collector is not None:
+            debug_collector.record(
+                step=f"debate_{kind}_round_{round_number}",
+                role=kind,
+                instructions=ADVOCATE_INSTRUCTIONS if kind == "advocate" else SKEPTIC_INSTRUCTIONS,
+                user_content=question,
+            )
+        return position
 
     def synthesize_dossier(
         self,

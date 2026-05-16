@@ -285,3 +285,10 @@ def apply_preset(settings: "Settings", preset_name: str) -> "Settings":
         )
     msg = f"Unsupported preset mode: {preset.llm_mode}"
     raise ValueError(msg)
+
+
+def preset_role_metadata(preset_name: str) -> tuple[str, str, str]:
+    """Return (provider_name, model_name, mode) without instantiating a provider."""
+    preset = get_preset(preset_name)
+    model_name = (preset.mock_model or preset.model) if preset.llm_mode == "mock" else preset.model
+    return preset.provider_name, model_name, preset.llm_mode

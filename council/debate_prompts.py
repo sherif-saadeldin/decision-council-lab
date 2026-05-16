@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from council.models import AgentBrief, DebateRound, DebateTranscript
+from council.models import AgentBrief, DebatePosition, DebateRound, DebateTranscript
 from council.prompts import EVIDENCE_GUARDRAILS
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
@@ -76,6 +76,13 @@ MODERATOR_INSTRUCTIONS = (
     "- evidence_gaps: missing facts that block resolution"
 )
 
+RISK_OFFICER_INSTRUCTIONS = (
+    "You are the Risk Officer in a multi-model council debate. "
+    "Challenge BOTH the advocate and skeptic positions this round using council briefs only. "
+    "Name second-order risks, failure modes, and what both sides under-weight. "
+    "Fill responds_to_prior with a concise summary of advocate vs skeptic tension."
+)
+
 
 def debate_round_instructions() -> str:
     return f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}\n\nReturn one JSON object with advocate, skeptic, and moderator."
@@ -131,6 +138,66 @@ def format_debate_round_user_prompt(
     )
 
 
+def risk_officer_instructions() -> str:
+    return f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}\n\n{RISK_OFFICER_INSTRUCTIONS}"
+
+
+def format_risk_officer_user_prompt(
+    *,
+    question: str,
+    briefs: list[AgentBrief],
+    advocate: DebatePosition,
+    skeptic: DebatePosition,
+    round_number: int,
+    total_rounds: int,
+) -> str:
+    return (
+        f"Decision question:\n{question}\n\n"
+        f"Debate round {round_number} of {total_rounds}.\n\n"
+        f"{_format_briefs_for_debate(briefs)}\n\n"
+        f"Advocate argument:\n{advocate.argument}\n\n"
+        f"Skeptic argument:\n{skeptic.argument}\n\n"
+        "Produce a risk_officer position that challenges both sides. "
+        "Cite cited_roles from agent briefs and fill responds_to_prior."
+    )
+
+
+def format_advocate_only_user_prompt(
+    *,
+    question: str,
+    briefs: list[AgentBrief],
+    prior_rounds: list[DebateRound],
+    round_number: int,
+    total_rounds: int,
+) -> str:
+    return (
+        f"Decision question:\n{question}\n\n"
+        f"Debate round {round_number} of {total_rounds}.\n\n"
+        f"{_format_briefs_for_debate(briefs)}\n\n"
+        f"{_format_prior_rounds(prior_rounds)}\n\n"
+        "Produce ONLY the advocate position for this round."
+    )
+
+
+def format_skeptic_only_user_prompt(
+    *,
+    question: str,
+    briefs: list[AgentBrief],
+    prior_rounds: list[DebateRound],
+    advocate_argument: str,
+    round_number: int,
+    total_rounds: int,
+) -> str:
+    return (
+        f"Decision question:\n{question}\n\n"
+        f"Debate round {round_number} of {total_rounds}.\n\n"
+        f"{_format_briefs_for_debate(briefs)}\n\n"
+        f"{_format_prior_rounds(prior_rounds)}\n\n"
+        f"Advocate argument this round:\n{advocate_argument}\n\n"
+        "Produce ONLY the skeptic position. You must respond to the advocate in responds_to_prior."
+    )
+
+
 def format_debate_transcript_for_chair(transcript: DebateTranscript | list[DebateRound]) -> str:
     if isinstance(transcript, DebateTranscript):
         rounds = transcript.rounds
@@ -151,6 +218,18 @@ def format_debate_transcript_for_chair(transcript: DebateTranscript | list[Debat
                 f"Cited: {', '.join(debate_round.skeptic.cited_roles) or '(none)'}",
                 f"Responds to: {debate_round.skeptic.responds_to_prior}",
                 f"Uncertainty: {debate_round.skeptic.uncertainty}",
+            ]
+        )
+        if debate_round.risk_officer is not None:
+            lines.extend(
+                [
+                    f"\nRisk Officer: {debate_round.risk_officer.argument}",
+                    f"Cited: {', '.join(debate_round.risk_officer.cited_roles) or '(none)'}",
+                    f"Responds to: {debate_round.risk_officer.responds_to_prior}",
+                ]
+            )
+        lines.extend(
+            [
                 f"\nModerator resolved: {', '.join(debate_round.moderator.resolved_points) or '(none)'}",
                 f"Moderator unresolved: {', '.join(debate_round.moderator.unresolved_points) or '(none)'}",
                 f"Deciding tensions: {', '.join(debate_round.moderator.deciding_tensions) or '(none)'}",

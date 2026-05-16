@@ -1,6 +1,6 @@
 # Decision Council Lab
 
-Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Moderator), then the chair produces a decision dossier. Schema 1.4 adds `debate_transcript` to run artifacts.
+Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Risk / Chair), then the chair produces a decision dossier. Schema 1.5 adds multi-model `council` mode with per-role preset routing and optional implementation packs.
 
 ## Setup
 
@@ -325,6 +325,36 @@ uv run python main.py run "Your question" --fast
 - `--quiet` — artifact paths only; suppresses progress lines
 - `--save-prompt-debug` — writes `runs/<run_id>/prompt_debug.md` (no secrets)
 
+### Multi-model council (Slice 5.2)
+
+Run a council where each role can use a different model preset (real multi-model debate, not one model role-playing every agent):
+
+```bash
+uv run python main.py council "Should I build X?"
+uv run python main.py council "Should I build X?" \
+  --council-presets mock,openrouter-free-qwen,groq-llama,nvidia-nemotron
+```
+
+Per-role routing (overrides `--council-presets` when set):
+
+```bash
+uv run python main.py council "Question?" \
+  --researcher-preset mock \
+  --advocate-preset groq-llama \
+  --skeptic-preset nvidia-nemotron \
+  --risk-preset cerebras-qwen \
+  --operator-preset mock \
+  --chair-preset openrouter-free-qwen
+```
+
+- If only one distinct preset is used, the CLI warns that this is **role-play debate**, not multi-model debate.
+- Artifacts include full debate transcript, **model used per role**, verdict fields (decision, confidence, evidence gaps, kill criteria, next actions).
+- After the verdict, you are prompted: `Create implementation pack? [y/N]` — or pass `--create-pack` / `--yes-pack` for non-interactive pack generation (`implementation_plan.md`, `task_breakdown.md`, `cursor_prompt.md`, `risk_register.md` in the run folder).
+
+```bash
+uv run python main.py council "Question?" --council-presets mock,mock,mock,mock,mock,mock --debate-rounds 1 --create-pack
+```
+
 ### Mock with debate (no API key)
 
 ```bash
@@ -350,7 +380,7 @@ Each council run is saved under `runs/<run_id>/`:
 
 | File | Purpose |
 |------|---------|
-| `run.json` | Structured record (`schema_version` 1.4, agent briefs, `debate_transcript`, dossier) |
+| `run.json` | Structured record (`schema_version` 1.5, agent briefs, `debate_transcript`, dossier, optional `role_assignments`) |
 | `run.md` | Human-readable dossier with Debate Transcript (when rounds > 0), Chair Judgment, evidence sections |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 | `comparisons/<id>/comparison.json` | Multi-preset/profile comparison (from `compare` / `benchmark`) |
@@ -462,4 +492,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.3 (Anthropic/Gemini native SDK providers).

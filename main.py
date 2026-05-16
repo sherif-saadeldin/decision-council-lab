@@ -5,9 +5,11 @@ from rich.console import Console
 from council.cli import (
     KNOWN_PROJECT_ERRORS,
     build_compare_request,
+    build_council_request,
     build_smoke_request,
     parse_args,
     render_comparison_result,
+    render_council_result,
     render_smoke_report,
     render_config_init,
     render_config_list,
@@ -27,10 +29,13 @@ from council.cli import (
     resolve_settings,
 )
 from council.compare import run_comparison
+from council.config import Settings
+from council.council_session import run_council_session
 from council.setup import run_setup
 from council.smoke import run_smoke
 from council.doctor import run_doctor
 from council.engine import run_council
+from council.implementation_pack import write_implementation_pack
 from council.progress import ConsoleProgressReporter, NullProgressReporter
 from council.prompt_debug import save_prompt_debug
 from council.storage import save_run
@@ -83,8 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     if command == "setup":
         return _setup_command(args, console, error_console)
 
+    if command == "council":
+        return _council_command(args, console, error_console)
+
     error_console.print(
-        "Unknown command. Use: run, compare, smoke, setup, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, council, compare, smoke, setup, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
@@ -181,6 +189,48 @@ def _run_command(args, console: Console, error_console: Console) -> int:
         return 0
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=args.quiet)
+        return 1
+
+
+def _council_command(args, console: Console, error_console: Console) -> int:
+    from rich.prompt import Confirm
+
+    question = (getattr(args, "question", None) or "").strip()
+    if not question:
+        error_console.print("A decision question is required.", style="red")
+        return 1
+
+    try:
+        request = build_council_request(args)
+        runtime = request.runtime or resolve_runtime_options(args)
+        progress = (
+            ConsoleProgressReporter(console, enabled=runtime.show_progress)
+            if runtime.show_progress
+            else NullProgressReporter()
+        )
+        session = run_council_session(request, progress=progress)
+        settings = request.base_settings or Settings.from_env()
+        json_path, md_path = save_run(session.result, settings=settings)
+
+        pack_paths: list = []
+        create_pack = request.create_pack
+        if request.prompt_create_pack and not create_pack:
+            create_pack = Confirm.ask("Create implementation pack?", default=False)
+        if create_pack:
+            pack_paths = write_implementation_pack(json_path.parent, session.result)
+
+        render_council_result(
+            console,
+            session.result,
+            json_path,
+            md_path,
+            quiet=bool(args.quiet),
+            role_play_warning=session.role_play_warning,
+            pack_paths=pack_paths,
+        )
+        return 0
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=bool(getattr(args, "quiet", False)))
         return 1
 
 

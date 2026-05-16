@@ -10,11 +10,26 @@ from openai import OpenAI
 
 from council.credentials import is_ollama_dummy_key
 from council.debate_prompts import (
+    ADVOCATE_INSTRUCTIONS,
     DEBATE_ROUND_JSON_SCHEMA,
+    SKEPTIC_INSTRUCTIONS,
+    _POSITION_SCHEMA,
     debate_round_instructions,
+    format_advocate_only_user_prompt,
     format_debate_round_user_prompt,
+    format_risk_officer_user_prompt,
+    format_skeptic_only_user_prompt,
+    risk_officer_instructions,
 )
-from council.models import AgentBrief, DebateRound, DebateTranscript, DecisionDossier
+from council.debate_runner import PositionKind
+from council.models import (
+    AgentBrief,
+    DebatePosition,
+    DebateRole,
+    DebateRound,
+    DebateTranscript,
+    DecisionDossier,
+)
 from council.prompt_debug import PromptDebugCollector
 from council.prompts import (
     AGENT_BRIEF_JSON_SCHEMA,
@@ -38,6 +53,7 @@ from council.providers.openai_errors import raise_compatible_provider_error
 from council.providers.models import ProviderMetadata, ProviderRequest, ProviderResponse
 from council.providers.parsing import (
     parse_agent_brief_payload,
+    parse_debate_position_payload,
     parse_debate_round_payload,
     parse_dossier_payload,
 )
@@ -178,6 +194,84 @@ class OpenAICompatibleProvider(LLMProvider):
             token_usage=None,
             latency_ms=latency_ms,
             raw_response=raw_text,
+        )
+
+    def generate_debate_position(
+        self,
+        *,
+        kind: PositionKind,
+        question: str,
+        briefs: list[AgentBrief],
+        run_id: str,
+        round_number: int,
+        total_rounds: int,
+        prior_rounds: list[DebateRound],
+        advocate_argument: str = "",
+        skeptic_argument: str = "",
+        debug_collector: PromptDebugCollector | None = None,
+    ) -> DebatePosition:
+        if kind == "advocate":
+            instructions = f"{ADVOCATE_INSTRUCTIONS}\n\nReturn one JSON object for advocate only."
+            user_content = format_advocate_only_user_prompt(
+                question=question,
+                briefs=briefs,
+                prior_rounds=prior_rounds,
+                round_number=round_number,
+                total_rounds=total_rounds,
+            )
+            debate_role = DebateRole.ADVOCATE
+        elif kind == "skeptic":
+            instructions = f"{SKEPTIC_INSTRUCTIONS}\n\nReturn one JSON object for skeptic only."
+            user_content = format_skeptic_only_user_prompt(
+                question=question,
+                briefs=briefs,
+                prior_rounds=prior_rounds,
+                advocate_argument=advocate_argument,
+                round_number=round_number,
+                total_rounds=total_rounds,
+            )
+            debate_role = DebateRole.SKEPTIC
+        else:
+            instructions = f"{risk_officer_instructions()}\n\nReturn one JSON object only."
+            user_content = format_risk_officer_user_prompt(
+                question=question,
+                briefs=briefs,
+                advocate=DebatePosition(
+                    role=DebateRole.ADVOCATE,
+                    argument=advocate_argument,
+                    cited_roles=[],
+                    responds_to_prior="",
+                    uncertainty="",
+                ),
+                skeptic=DebatePosition(
+                    role=DebateRole.SKEPTIC,
+                    argument=skeptic_argument,
+                    cited_roles=[],
+                    responds_to_prior="",
+                    uncertainty="",
+                ),
+                round_number=round_number,
+                total_rounds=total_rounds,
+            )
+            debate_role = DebateRole.SKEPTIC
+
+        self._record_debug(
+            debug_collector,
+            step=f"debate_{kind}_round_{round_number}",
+            role=kind,
+            instructions=instructions,
+            user_content=user_content,
+        )
+        raw_text = self._call_structured_json(
+            instructions=instructions,
+            user_content=user_content,
+            schema_name=f"debate_{kind}",
+            schema=_POSITION_SCHEMA,
+        )
+        return parse_debate_position_payload(
+            raw_text,
+            role=debate_role,
+            provider_name=self._metadata.provider_name,
         )
 
     def run_debate_round(

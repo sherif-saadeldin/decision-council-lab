@@ -41,13 +41,13 @@ All LLM backends implement `LLMProvider`:
 - **ProviderResponse** — `brief`, optional `token_usage`, `latency_ms`, `raw_response`
 - **raw_response** is persisted in `run.json` only; Markdown dossiers omit it.
 
-### Agent brief fields (schema 1.4)
+### Agent brief fields (schema 1.5)
 
 Each brief includes: `role`, `headline`, `role_specific_finding`, `evidence_basis`, `uncertainty`, `decision_implication`, `reasoning`, `confidence`, `source_refs`, `evidence_gaps`, `proposed_metrics`, `unsupported_assumptions`.
 
 Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argument_for`, `strongest_argument_against`, `deciding_factor`, `confidence_rationale`, plus consolidated guardrail fields.
 
-`CouncilRunResult` also includes optional `debate_transcript` (`DebateRound` list with advocate, skeptic, moderator per round).
+`CouncilRunResult` also includes optional `debate_transcript` (`DebateRound` list with advocate, skeptic, risk officer, moderator per round) and `role_assignments` for multi-model runs.
 
 Shared prompts: `council/prompts.py` (agents + chair), `council/debate_prompts.py` (debate rounds).
 
@@ -67,8 +67,31 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `secrets` | OS keyring for `OPENAI_API_KEY` / `LLM_API_KEY` |
 | `compare` / `benchmark` | Same question across multiple presets/profiles; comparison report |
 | `setup` | Interactive first-run wizard; optional `--non-interactive --profile NAME` |
+| `council` | Multi-model council: per-role preset routing, cross-model debate, optional implementation pack |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
+
+### Multi-model council (Slice 5.2)
+
+```text
+Question + role presets (--council-presets or --*-preset)
+    ↓
+build_council_routing() → RoleAssignment per slot (metadata from presets)
+    ↓
+Agent briefs (researcher, skeptic, risk, operator) — each via provider_for_slot()
+    ↓
+run_multi_model_debate() — advocate ↔ skeptic, risk challenges both (per round)
+    ↓
+Chair (separate preset) — synthesize_dossier resolves disagreements
+    ↓
+run.json / run.md (+ role_assignments table)
+    ↓
+Optional implementation pack (template markdown, no extra LLM calls)
+```
+
+Modules: `council/role_routing.py`, `council/council_session.py`, `council/multi_debate.py`, `council/debate_runner.py`, `council/implementation_pack.py`.
+
+`CouncilRunResult` schema 1.5 fields: `council_mode`, `multi_model`, `role_play_warning`, `role_assignments`, optional `debate_transcript.risk_officer`.
 
 ### Setup wizard (Slice 5.1)
 

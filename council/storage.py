@@ -52,6 +52,23 @@ def _format_debate_round_markdown(lines: list[str], debate_round: DebateRound) -
             f"- **Responds to:** {debate_round.skeptic.responds_to_prior}",
             f"- **Uncertainty:** {debate_round.skeptic.uncertainty}",
             "",
+        ]
+    )
+    if debate_round.risk_officer is not None:
+        lines.extend(
+            [
+                "**Risk Officer**",
+                "",
+                debate_round.risk_officer.argument,
+                "",
+                f"- **Cites briefs:** {', '.join(debate_round.risk_officer.cited_roles) or '(none)'}",
+                f"- **Responds to:** {debate_round.risk_officer.responds_to_prior}",
+                f"- **Uncertainty:** {debate_round.risk_officer.uncertainty}",
+                "",
+            ]
+        )
+    lines.extend(
+        [
             "**Moderator**",
             "",
         ]
@@ -74,6 +91,20 @@ def _format_debate_round_markdown(lines: list[str], debate_round: DebateRound) -
         lines.append("")
 
 
+def _format_role_assignments_markdown(lines: list[str], result: CouncilRunResult) -> None:
+    if not result.role_assignments:
+        return
+    lines.extend(["", "## Multi-Model Council", ""])
+    if result.role_play_warning:
+        lines.extend([f"> {result.role_play_warning}", ""])
+    lines.extend(["| Role | Preset | Provider | Model |", "| --- | --- | --- | --- |"])
+    for item in result.role_assignments:
+        lines.append(
+            f"| {item.slot} | {item.preset} | {item.provider_name} | `{item.model_name}` |"
+        )
+    lines.append("")
+
+
 def _format_debate_transcript_markdown(lines: list[str], result: CouncilRunResult) -> None:
     transcript = result.debate_transcript
     if transcript is None or not transcript.rounds:
@@ -87,11 +118,19 @@ def _format_debate_transcript_markdown(lines: list[str], result: CouncilRunResul
         lines.append("")
 
 
-def _format_agent_brief_markdown(lines: list[str], brief: AgentBrief) -> None:
+def _format_agent_brief_markdown(
+    lines: list[str],
+    brief: AgentBrief,
+    *,
+    model_label: str | None = None,
+) -> None:
     role_label = brief.role.value.replace("_", " ").title()
+    title = f"### {role_label} Agent"
+    if model_label:
+        title = f"{title} (`{model_label}`)"
     lines.extend(
         [
-            f"### {role_label} Agent",
+            title,
             "",
             f"**Headline:** {brief.headline}",
             f"**Confidence:** {brief.confidence:.0%} ({brief.confidence:.2f})",
@@ -144,6 +183,7 @@ def _format_markdown(result: CouncilRunResult) -> str:
     ]
 
     _format_debate_transcript_markdown(lines, result)
+    _format_role_assignments_markdown(lines, result)
 
     lines.extend(
         [
@@ -208,8 +248,20 @@ def _format_markdown(result: CouncilRunResult) -> str:
     _bullet_section(lines, "Open Questions", dossier.open_questions)
 
     lines.extend(["", "## Agent Briefs", ""])
+    slot_by_role = {
+        "research": "researcher",
+        "skeptic": "skeptic",
+        "risk": "risk",
+        "operator": "operator",
+    }
+    assignment_by_slot = {item.slot: item for item in result.role_assignments}
     for brief in result.agent_briefs:
-        _format_agent_brief_markdown(lines, brief)
+        slot = slot_by_role.get(brief.role.value)
+        model_label = None
+        if slot and slot in assignment_by_slot:
+            item = assignment_by_slot[slot]
+            model_label = f"{item.provider_name}/{item.model_name}"
+        _format_agent_brief_markdown(lines, brief, model_label=model_label)
 
     return "\n".join(lines).rstrip() + "\n"
 

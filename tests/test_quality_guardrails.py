@@ -27,10 +27,10 @@ def test_mock_proposed_metrics_are_labeled(mock_settings: Settings) -> None:
         assert_proposed_metrics_labeled(brief.proposed_metrics)
 
 
-def test_schema_version_incremented_to_1_4(mock_settings: Settings) -> None:
+def test_schema_version_incremented_to_1_5(mock_settings: Settings) -> None:
     result, _ = run_council("Schema bump?", settings=mock_settings)
-    assert result.schema_version == "1.4"
-    assert RUN_SCHEMA_VERSION == "1.4"
+    assert result.schema_version == "1.5"
+    assert RUN_SCHEMA_VERSION == "1.5"
 
 
 def test_markdown_shows_evidence_gaps_prominently(mock_settings: Settings) -> None:

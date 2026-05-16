@@ -148,6 +148,24 @@ def _position_from_payload(role: DebateRole, payload: _DebatePositionPayload) ->
     )
 
 
+def parse_debate_position_payload(
+    raw_text: str,
+    *,
+    role: DebateRole,
+    provider_name: str,
+) -> DebatePosition:
+    payload = _load_json_object(raw_text, provider_name)
+    try:
+        parsed = _DebatePositionPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise ProviderResponseError(
+            provider_name,
+            f"debate position validation failed: {exc}",
+            failure_kind="parse_failure",
+        ) from exc
+    return _position_from_payload(role, parsed)
+
+
 def parse_debate_round_payload(
     raw_text: str,
     *,

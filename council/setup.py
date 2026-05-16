@@ -549,9 +549,9 @@ def _execute_plan(
     if interactive and prompt is not None and plan.smoke_preset:
         default_smoke = plan.smoke_default and (
             plan.profile.preset == "mock"
-            or is_ollama_openai_compatible(_settings_for_profile(plan))
+            or is_ollama_openai_compatible(_settings_for_profile(plan, config_path=saved))
         )
-        if is_ollama_openai_compatible(_settings_for_profile(plan)) and not doctor_passed:
+        if is_ollama_openai_compatible(_settings_for_profile(plan, config_path=saved)) and not doctor_passed:
             default_smoke = False
         if plan.needs_secret:
             default_smoke = False
@@ -568,11 +568,14 @@ def _execute_plan(
     )
 
 
-def _settings_for_profile(plan: SetupPlan) -> Settings:
+def _settings_for_profile(plan: SetupPlan, *, config_path: Path | None = None) -> Settings:
     from council.config_profiles import resolve_settings_with_profile
 
-    config = load_config_file()
-    profile = config.get_profile(plan.profile_name) if config else plan.profile
+    config = load_config_file(config_path)
+    if config and plan.profile_name in config.profiles:
+        profile = config.get_profile(plan.profile_name)
+    else:
+        profile = plan.profile
     return resolve_settings_with_profile(Settings.from_env(), profile=profile, cli_preset=None)
 
 
@@ -603,7 +606,7 @@ def _run_doctor_step(
 ) -> bool:
     from council.cli import render_doctor
 
-    settings = _settings_for_profile(plan)
+    settings = _settings_for_profile(plan, config_path=config_file)
     runtime = RuntimeOptions(api_mode="chat" if settings.llm_provider_name in {"ollama", "nvidia", "groq", "cerebras"} else "auto")
     run = doctor_fn or run_doctor
     checks = run(settings, runtime=runtime)

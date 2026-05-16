@@ -67,6 +67,7 @@ class DebateRound(BaseModel):
     round_number: int = Field(ge=1)
     advocate: DebatePosition
     skeptic: DebatePosition
+    risk_officer: DebatePosition | None = None
     moderator: ModeratorSummary
 
 
@@ -100,7 +101,15 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.4"
+RUN_SCHEMA_VERSION = "1.5"
+
+
+class RoleAssignmentRecord(BaseModel):
+    slot: str
+    preset: str
+    provider_name: str
+    model_name: str
+    mode: str
 DEFAULT_DEBATE_ROUNDS = 2
 
 
@@ -111,6 +120,10 @@ class CouncilRunResult(BaseModel):
     debate_transcript: DebateTranscript | None = None
     provider_metadata: ProviderMetadata
     provider_responses: list[ProviderResponse] = Field(default_factory=list)
+    council_mode: str | None = None
+    multi_model: bool = False
+    role_play_warning: str | None = None
+    role_assignments: list[RoleAssignmentRecord] = Field(default_factory=list)
 
     @property
     def provider_name(self) -> str:
