@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.console import Console
 
 from council.cli import (
@@ -17,6 +19,8 @@ from council.cli import (
     render_config_use,
     render_doctor,
     render_known_error,
+    render_runs_list,
+    render_runs_show,
     render_preset_list,
     render_result,
     render_secrets_delete,
@@ -25,6 +29,7 @@ from council.cli import (
     render_secrets_set,
     render_version,
     resolve_debate_rounds,
+    resolve_runs_dir,
     resolve_runtime_options,
     resolve_settings,
 )
@@ -38,6 +43,7 @@ from council.engine import run_council
 from council.implementation_pack import write_implementation_pack
 from council.progress import ConsoleProgressReporter, NullProgressReporter
 from council.prompt_debug import save_prompt_debug
+from council.run_catalog import RunNotFoundError, get_run_summary
 from council.storage import save_run
 
 
@@ -91,8 +97,11 @@ def main(argv: list[str] | None = None) -> int:
     if command == "council":
         return _council_command(args, console, error_console)
 
+    if command == "runs":
+        return _runs_command(args, console, error_console)
+
     error_console.print(
-        "Unknown command. Use: run, council, compare, smoke, setup, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, council, runs, compare, smoke, setup, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
@@ -192,6 +201,27 @@ def _run_command(args, console: Console, error_console: Console) -> int:
         return 1
 
 
+def _runs_command(args, console: Console, error_console: Console) -> int:
+    try:
+        runs_dir = resolve_runs_dir(args)
+        sub = getattr(args, "runs_command", None)
+        if sub == "list":
+            render_runs_list(console, runs_dir)
+            return 0
+        if sub == "show":
+            summary = get_run_summary(runs_dir, args.run_id.strip())
+            render_runs_show(console, summary)
+            return 0
+        error_console.print("Usage: runs list | runs show RUN_ID", style="red")
+        return 1
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+
+
 def _council_command(args, console: Console, error_console: Console) -> int:
     from rich.prompt import Confirm
 
@@ -210,14 +240,21 @@ def _council_command(args, console: Console, error_console: Console) -> int:
         )
         session = run_council_session(request, progress=progress)
         settings = request.base_settings or Settings.from_env()
-        json_path, md_path = save_run(session.result, settings=settings)
 
-        pack_paths: list = []
+        pack_paths: list[Path] = []
         create_pack = request.create_pack
         if request.prompt_create_pack and not create_pack:
             create_pack = Confirm.ask("Create implementation pack?", default=False)
         if create_pack:
-            pack_paths = write_implementation_pack(json_path.parent, session.result)
+            run_dir = settings.runs_dir / session.result.dossier.run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            pack_paths = write_implementation_pack(run_dir, session.result)
+
+        json_path, md_path = save_run(
+            session.result,
+            settings=settings,
+            implementation_pack_paths=pack_paths or None,
+        )
 
         render_council_result(
             console,

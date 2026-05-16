@@ -4,165 +4,15 @@ import json
 from pathlib import Path
 
 from council.config import Settings
-from council.models import AgentBrief, CouncilRunResult, DebateRound
-
-
-def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
-    lines.extend(["", f"## {heading}", ""])
-    if items:
-        lines.extend(f"- {item}" for item in items)
-    else:
-        lines.append("_None recorded._")
-
-
-def _format_proposed_metric(item: str) -> str:
-    lowered = item.strip().lower()
-    if lowered.startswith("proposed:"):
-        detail = item.split(":", 1)[1].strip()
-        return f"**Proposed:** {detail}"
-    return f"**Proposed:** {item.strip()}"
-
-
-def _proposed_metrics_section(lines: list[str], heading: str, items: list[str]) -> None:
-    lines.extend(["", f"## {heading}", ""])
-    if items:
-        lines.extend(f"- {_format_proposed_metric(item)}" for item in items)
-    else:
-        lines.append("_None recorded._")
-
-
-def _format_debate_round_markdown(lines: list[str], debate_round: DebateRound) -> None:
-    lines.extend(
-        [
-            f"### Round {debate_round.round_number}",
-            "",
-            "**Advocate**",
-            "",
-            debate_round.advocate.argument,
-            "",
-            f"- **Cites briefs:** {', '.join(debate_round.advocate.cited_roles) or '(none)'}",
-            f"- **Responds to:** {debate_round.advocate.responds_to_prior}",
-            f"- **Uncertainty:** {debate_round.advocate.uncertainty}",
-            "",
-            "**Skeptic**",
-            "",
-            debate_round.skeptic.argument,
-            "",
-            f"- **Cites briefs:** {', '.join(debate_round.skeptic.cited_roles) or '(none)'}",
-            f"- **Responds to:** {debate_round.skeptic.responds_to_prior}",
-            f"- **Uncertainty:** {debate_round.skeptic.uncertainty}",
-            "",
-        ]
-    )
-    if debate_round.risk_officer is not None:
-        lines.extend(
-            [
-                "**Risk Officer**",
-                "",
-                debate_round.risk_officer.argument,
-                "",
-                f"- **Cites briefs:** {', '.join(debate_round.risk_officer.cited_roles) or '(none)'}",
-                f"- **Responds to:** {debate_round.risk_officer.responds_to_prior}",
-                f"- **Uncertainty:** {debate_round.risk_officer.uncertainty}",
-                "",
-            ]
-        )
-    lines.extend(
-        [
-            "**Moderator**",
-            "",
-        ]
-    )
-    if debate_round.moderator.resolved_points:
-        lines.append("*Resolved this round:*")
-        lines.extend(f"- {item}" for item in debate_round.moderator.resolved_points)
-        lines.append("")
-    if debate_round.moderator.unresolved_points:
-        lines.append("*Unresolved this round:*")
-        lines.extend(f"- {item}" for item in debate_round.moderator.unresolved_points)
-        lines.append("")
-    if debate_round.moderator.deciding_tensions:
-        lines.append("*Deciding tensions:*")
-        lines.extend(f"- {item}" for item in debate_round.moderator.deciding_tensions)
-        lines.append("")
-    if debate_round.moderator.evidence_gaps:
-        lines.append("*Evidence gaps:*")
-        lines.extend(f"- {item}" for item in debate_round.moderator.evidence_gaps)
-        lines.append("")
-
-
-def _format_role_assignments_markdown(lines: list[str], result: CouncilRunResult) -> None:
-    if not result.role_assignments:
-        return
-    lines.extend(["", "## Multi-Model Council", ""])
-    if result.role_play_warning:
-        lines.extend([f"> {result.role_play_warning}", ""])
-    lines.extend(["| Role | Preset | Provider | Model |", "| --- | --- | --- | --- |"])
-    for item in result.role_assignments:
-        lines.append(
-            f"| {item.slot} | {item.preset} | {item.provider_name} | `{item.model_name}` |"
-        )
-    lines.append("")
-
-
-def _format_debate_transcript_markdown(lines: list[str], result: CouncilRunResult) -> None:
-    transcript = result.debate_transcript
-    if transcript is None or not transcript.rounds:
-        return
-    lines.extend(["", "## Debate Transcript", ""])
-    for debate_round in transcript.rounds:
-        _format_debate_round_markdown(lines, debate_round)
-    if transcript.final_unresolved_disagreements:
-        lines.extend(["**Unresolved disagreements (final):**", ""])
-        lines.extend(f"- {item}" for item in transcript.final_unresolved_disagreements)
-        lines.append("")
-
-
-def _format_agent_brief_markdown(
-    lines: list[str],
-    brief: AgentBrief,
-    *,
-    model_label: str | None = None,
-) -> None:
-    role_label = brief.role.value.replace("_", " ").title()
-    title = f"### {role_label} Agent"
-    if model_label:
-        title = f"{title} (`{model_label}`)"
-    lines.extend(
-        [
-            title,
-            "",
-            f"**Headline:** {brief.headline}",
-            f"**Confidence:** {brief.confidence:.0%} ({brief.confidence:.2f})",
-            "",
-            f"**Role-specific finding:** {brief.role_specific_finding}",
-            "",
-            f"**Evidence basis:** {brief.evidence_basis}",
-            "",
-            f"**Uncertainty:** {brief.uncertainty}",
-            "",
-            f"**Decision implication:** {brief.decision_implication}",
-            "",
-            f"**Reasoning:** {brief.reasoning}",
-            "",
-        ]
-    )
-    if brief.evidence_gaps:
-        lines.extend(["**Evidence gaps:**", ""])
-        lines.extend(f"- {gap}" for gap in brief.evidence_gaps)
-        lines.append("")
-    if brief.proposed_metrics:
-        lines.extend(["**Proposed metrics:**", ""])
-        lines.extend(f"- {_format_proposed_metric(metric)}" for metric in brief.proposed_metrics)
-        lines.append("")
-    if brief.unsupported_assumptions:
-        lines.extend(["**Unsupported assumptions:**", ""])
-        lines.extend(f"- {item}" for item in brief.unsupported_assumptions)
-        lines.append("")
-    if brief.source_refs:
-        lines.append("**Sources:**")
-        lines.extend(f"- {ref}" for ref in brief.source_refs)
-        lines.append("")
+from council.council_markdown import format_council_run_markdown
+from council.markdown_format import (
+    bullet_section,
+    format_agent_brief_markdown,
+    format_debate_transcript_markdown,
+    format_role_assignments_markdown,
+    proposed_metrics_section,
+)
+from council.models import CouncilRunResult
 
 
 def _format_markdown(result: CouncilRunResult) -> str:
@@ -182,8 +32,8 @@ def _format_markdown(result: CouncilRunResult) -> str:
         f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
     ]
 
-    _format_debate_transcript_markdown(lines, result)
-    _format_role_assignments_markdown(lines, result)
+    format_debate_transcript_markdown(lines, result)
+    format_role_assignments_markdown(lines, result)
 
     lines.extend(
         [
@@ -203,9 +53,9 @@ def _format_markdown(result: CouncilRunResult) -> str:
         ]
     )
 
-    _bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
-    _proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)
-    _bullet_section(lines, "Unsupported Assumptions", dossier.unsupported_assumptions)
+    bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
+    proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)
+    bullet_section(lines, "Unsupported Assumptions", dossier.unsupported_assumptions)
 
     lines.extend(
         [
@@ -225,10 +75,10 @@ def _format_markdown(result: CouncilRunResult) -> str:
         ]
     )
 
-    _bullet_section(lines, "Assumptions", dossier.assumptions)
-    _bullet_section(lines, "Arguments For", dossier.arguments_for)
-    _bullet_section(lines, "Arguments Against", dossier.arguments_against)
-    _bullet_section(lines, "Risks", dossier.risks)
+    bullet_section(lines, "Assumptions", dossier.assumptions)
+    bullet_section(lines, "Arguments For", dossier.arguments_for)
+    bullet_section(lines, "Arguments Against", dossier.arguments_against)
+    bullet_section(lines, "Risks", dossier.risks)
 
     lines.extend(
         [
@@ -243,9 +93,9 @@ def _format_markdown(result: CouncilRunResult) -> str:
         ]
     )
 
-    _bullet_section(lines, "Kill Criteria", dossier.kill_criteria)
-    _bullet_section(lines, "Next Actions", dossier.next_actions)
-    _bullet_section(lines, "Open Questions", dossier.open_questions)
+    bullet_section(lines, "Kill Criteria", dossier.kill_criteria)
+    bullet_section(lines, "Next Actions", dossier.next_actions)
+    bullet_section(lines, "Open Questions", dossier.open_questions)
 
     lines.extend(["", "## Agent Briefs", ""])
     slot_by_role = {
@@ -261,12 +111,21 @@ def _format_markdown(result: CouncilRunResult) -> str:
         if slot and slot in assignment_by_slot:
             item = assignment_by_slot[slot]
             model_label = f"{item.provider_name}/{item.model_name}"
-        _format_agent_brief_markdown(lines, brief, model_label=model_label)
+        format_agent_brief_markdown(lines, brief, model_label=model_label)
 
     return "\n".join(lines).rstrip() + "\n"
 
 
-def save_run(result: CouncilRunResult, settings: Settings | None = None) -> tuple[Path, Path]:
+def _is_council_run(result: CouncilRunResult) -> bool:
+    return result.council_mode == "multi" or bool(result.role_assignments)
+
+
+def save_run(
+    result: CouncilRunResult,
+    settings: Settings | None = None,
+    *,
+    implementation_pack_paths: list[Path] | None = None,
+) -> tuple[Path, Path]:
     settings = settings or Settings.from_env()
     run_dir = settings.runs_dir / result.dossier.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +138,13 @@ def save_run(result: CouncilRunResult, settings: Settings | None = None) -> tupl
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    md_path.write_text(_format_markdown(result), encoding="utf-8")
+    if _is_council_run(result):
+        md_text = format_council_run_markdown(
+            result,
+            implementation_pack_paths=implementation_pack_paths,
+        )
+    else:
+        md_text = _format_markdown(result)
+    md_path.write_text(md_text, encoding="utf-8")
 
     return json_path, md_path

@@ -349,10 +349,14 @@ uv run python main.py council "Question?" \
 
 - If only one distinct preset is used, the CLI warns that this is **role-play debate**, not multi-model debate.
 - Artifacts include full debate transcript, **model used per role**, verdict fields (decision, confidence, evidence gaps, kill criteria, next actions).
-- After the verdict, you are prompted: `Create implementation pack? [y/N]` — or pass `--create-pack` / `--yes-pack` for non-interactive pack generation (`implementation_plan.md`, `task_breakdown.md`, `cursor_prompt.md`, `risk_register.md` in the run folder).
+- After the verdict, you are prompted: `Create implementation pack? [y/N]` — or pass `--create-pack` / `--yes-pack` for non-interactive pack generation.
+- Council `run.md` uses a dedicated layout: session summary, role/model table, debate rounds, chair verdict, pack listing, and next suggested command.
+- Implementation pack files (Slice 5.3): `mvp_scope.md`, `implementation_plan.md`, `task_breakdown.md`, `cursor_build_prompt.md`, `risk_register.md`, `approval_checklist.md` — each includes source `run_id`, scope boundaries, assumptions, and approval gates.
 
 ```bash
 uv run python main.py council "Question?" --council-presets mock,mock,mock,mock,mock,mock --debate-rounds 1 --create-pack
+uv run python main.py runs list
+uv run python main.py runs show <run_id>
 ```
 
 ### Mock with debate (no API key)
@@ -492,4 +496,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.3 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.4 (Anthropic/Gemini native SDK providers).

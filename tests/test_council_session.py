@@ -104,10 +104,12 @@ def test_implementation_pack_created_only_when_requested(tmp_path: Path) -> None
     assert not (run_dir / "implementation_plan.md").exists()
 
     paths = write_implementation_pack(run_dir, session.result)
-    assert len(paths) == 4
+    assert len(paths) == 6
     assert (run_dir / "implementation_plan.md").exists()
     assert (run_dir / "task_breakdown.md").exists()
-    assert (run_dir / "cursor_prompt.md").exists()
+    assert (run_dir / "cursor_build_prompt.md").exists()
+    assert (run_dir / "mvp_scope.md").exists()
+    assert (run_dir / "approval_checklist.md").exists()
     assert (run_dir / "risk_register.md").exists()
     text = (run_dir / "implementation_plan.md").read_text(encoding="utf-8")
     assert "sk-" not in text

@@ -25,7 +25,8 @@ Slice 4.9 — Stabilization: timeouts, Ollama doctor/tags, smoke preflight, hang
 Slice 5 — Free/cheap hosted provider presets (NVIDIA NIM, Groq, Cerebras, OpenRouter free) (done)
 Slice 5.1 — Interactive setup wizard (`setup` command) (done)
 Slice 5.2 — Multi-model council session (`council` command, per-role presets, implementation pack) (done)
-Slice 5.3 — Anthropic/Gemini native SDK providers
+Slice 5.3 — Council session usability + implementation pack quality (done)
+Slice 5.4 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements
 Slice 8 — UI integration later

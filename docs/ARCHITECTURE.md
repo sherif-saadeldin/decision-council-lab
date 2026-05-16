@@ -68,6 +68,7 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `compare` / `benchmark` | Same question across multiple presets/profiles; comparison report |
 | `setup` | Interactive first-run wizard; optional `--non-interactive --profile NAME` |
 | `council` | Multi-model council: per-role preset routing, cross-model debate, optional implementation pack |
+| `runs` | `runs list` (last 10) and `runs show RUN_ID` — inspect artifacts without dumping full markdown |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
@@ -87,9 +88,18 @@ Chair (separate preset) — synthesize_dossier resolves disagreements
 run.json / run.md (+ role_assignments table)
     ↓
 Optional implementation pack (template markdown, no extra LLM calls)
+    ↓
+runs list | runs show RUN_ID
 ```
 
-Modules: `council/role_routing.py`, `council/council_session.py`, `council/multi_debate.py`, `council/debate_runner.py`, `council/implementation_pack.py`.
+Modules: `council/role_routing.py`, `council/council_session.py`, `council/multi_debate.py`, `council/debate_runner.py`, `council/implementation_pack.py`, `council/council_markdown.py`, `council/run_catalog.py`.
+
+### Council usability (Slice 5.3)
+
+- **run.md (council):** `Council Session Summary` → role/model table → debate rounds → chair verdict → implementation pack files → next suggested `runs show` command.
+- **Implementation pack:** six markdown files with project name, question, source `run_id`, scope boundaries, assumptions, acceptance criteria, and explicit approval gates per artifact.
+- **CLI:** council completion prints run ID, verdict, confidence, role-play warning, artifact paths, and `uv run python main.py runs show <run_id>`.
+- **Run catalog:** `list_recent_runs()` scans `runs/<id>/run.json`; distinguishes `council` vs `standard` via `council_mode` / `role_assignments`.
 
 `CouncilRunResult` schema 1.5 fields: `council_mode`, `multi_model`, `role_play_warning`, `role_assignments`, optional `debate_transcript.risk_officer`.
 

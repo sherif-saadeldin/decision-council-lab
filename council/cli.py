@@ -12,6 +12,7 @@ from rich.table import Table
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
 from council.council_session import CouncilSessionRequest
 from council.role_routing import parse_council_preset_list
+from council.run_catalog import RunNotFoundError, list_recent_runs
 from council.config import Settings
 from council.config_profiles import (
     ConfigProfile,
@@ -62,6 +63,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     CompareConfigError,
     InvalidApiModeError,
     ValueError,
+    RunNotFoundError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -77,6 +79,7 @@ CLI_COMMANDS = frozenset(
         "smoke",
         "setup",
         "council",
+        "runs",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -183,6 +186,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Multi-model council: each role may use a different preset/model.",
     )
     _add_council_arguments(council_parser)
+
+    runs_parser = subparsers.add_parser("runs", help="List and inspect saved council runs.")
+    runs_sub = runs_parser.add_subparsers(dest="runs_command", required=True)
+    runs_list = runs_sub.add_parser("list", help="List the 10 most recent runs.")
+    _add_runs_dir_argument(runs_list)
+    runs_show = runs_sub.add_parser("show", help="Show run paths and a short summary.")
+    runs_show.add_argument("run_id", help="Run ID (directory name under runs/).")
+    _add_runs_dir_argument(runs_show)
 
     return parser
 
@@ -578,6 +589,23 @@ def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
     )
 
 
+def _add_runs_dir_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Directory for run artifacts (default: RUNS_DIR env or ./runs).",
+    )
+
+
+def resolve_runs_dir(args: argparse.Namespace) -> Path:
+    settings = Settings.from_env()
+    runs_dir = getattr(args, "runs_dir", None)
+    if runs_dir is not None:
+        return Path(runs_dir)
+    return settings.runs_dir
+
+
 def _settings_with_runs_dir(settings: Settings, runs_dir: Path) -> Settings:
     return Settings(
         llm_mode=settings.llm_mode,
@@ -670,6 +698,10 @@ def render_preset_list(console: Console) -> None:
     )
 
 
+def _runs_show_command(run_id: str) -> str:
+    return f"uv run python main.py runs show {run_id}"
+
+
 def render_council_result(
     console: Console,
     result,
@@ -680,23 +712,27 @@ def render_council_result(
     role_play_warning: str | None = None,
     pack_paths: list[Path] | None = None,
 ) -> None:
+    dossier = result.dossier
+    run_id = dossier.run_id
+    next_cmd = _runs_show_command(run_id)
+    confidence_pct = f"{dossier.confidence_score:.0%}"
+    decision_type = dossier.decision_type.value.replace("_", " ")
+
     if quiet:
         console.print(json_path)
         console.print(md_path)
         for path in pack_paths or []:
             console.print(path)
+        console.print(next_cmd)
         return
-
-    dossier = result.dossier
-    confidence_pct = f"{dossier.confidence_score:.0%}"
-    decision_type = dossier.decision_type.value.replace("_", " ")
 
     if role_play_warning:
         console.print(f"[yellow]{role_play_warning}[/yellow]\n")
 
     console.print(
         Panel.fit(
-            f"[bold]{dossier.recommendation}[/bold]\n\n"
+            f"[bold]{dossier.recommendation.split(chr(10), 1)[0]}[/bold]\n\n"
+            f"Run ID: [cyan]{run_id}[/cyan]\n"
             f"Decision type: {decision_type}\n"
             f"Confidence: {confidence_pct}\n"
             f"Deciding factor: {dossier.deciding_factor}",
@@ -717,8 +753,75 @@ def render_council_result(
 
     console.print(f"\n[green]Saved JSON:[/green] {json_path}")
     console.print(f"[green]Saved Markdown:[/green] {md_path}")
-    for path in pack_paths or []:
-        console.print(f"[green]Pack artifact:[/green] {path}")
+    if pack_paths:
+        console.print("[green]Implementation pack:[/green]")
+        for path in pack_paths:
+            console.print(f"  {path}")
+    console.print(f"\n[bold]Next command:[/bold]\n  {next_cmd}")
+
+
+def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> None:
+    summaries = list_recent_runs(runs_dir, limit=limit)
+    if not summaries:
+        console.print(f"No runs found in {runs_dir.resolve()}.")
+        return
+
+    table = Table(title=f"Recent runs (last {limit})")
+    table.add_column("Kind", style="bold")
+    table.add_column("Run ID")
+    table.add_column("Time (UTC)")
+    table.add_column("Question")
+    table.add_column("Chair")
+    for item in summaries:
+        kind_style = "cyan" if item.run_kind == "council" else "dim"
+        question = item.question.replace("\n", " ")
+        if len(question) > 48:
+            question = question[:47] + "…"
+        chair = f"{item.chair_provider} / {item.chair_model}"
+        if len(chair) > 36:
+            chair = chair[:35] + "…"
+        table.add_row(
+            f"[{kind_style}]{item.run_kind}[/{kind_style}]",
+            item.run_id,
+            item.timestamp.strftime("%Y-%m-%d %H:%M"),
+            question or "—",
+            chair,
+        )
+    console.print(table)
+    console.print(
+        "\nInspect a run: [bold]uv run python main.py runs show RUN_ID[/bold]"
+    )
+
+
+def render_runs_show(console: Console, summary) -> None:
+    confidence = (
+        f"{summary.confidence_score:.0%}"
+        if summary.confidence_score is not None
+        else "—"
+    )
+    console.print(
+        Panel.fit(
+            f"Run ID: [cyan]{summary.run_id}[/cyan]\n"
+            f"Kind: {summary.run_kind}\n"
+            f"Time (UTC): {summary.timestamp.isoformat()}\n"
+            f"Confidence: {confidence}",
+            title="Run Summary",
+        )
+    )
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold")
+    grid.add_column()
+    grid.add_row("Question", summary.question or "—")
+    grid.add_row("Verdict preview", summary.decision_preview or "—")
+    grid.add_row("Chair", f"{summary.chair_provider} / {summary.chair_model}")
+    grid.add_row("Markdown", str(summary.md_path.resolve()))
+    grid.add_row("JSON", str(summary.json_path.resolve()))
+    console.print(grid)
+    if not summary.md_path.is_file():
+        console.print("[yellow]Markdown file missing on disk.[/yellow]")
+    console.print(
+        f"\nOpen the dossier: [bold]{summary.md_path.name}[/bold] in the run folder above."
+    )
 
 
 def render_smoke_report(console: Console, report: SmokeReport) -> None:
