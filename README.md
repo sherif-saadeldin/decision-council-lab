@@ -90,10 +90,13 @@ uv run python main.py "Your question" --preset openrouter-sonnet  # needs LLM_AP
 | `openrouter-gemini` | openai_compatible | openrouter | google/gemini-2.5-pro-preview |
 | `openrouter-deepseek` | openai_compatible | openrouter | deepseek/deepseek-chat-v3-0324 |
 | `openrouter-qwen` | openai_compatible | openrouter | qwen/qwen-2.5-72b-instruct |
-| `ollama-qwen` | openai_compatible | ollama | qwen2.5:7b |
-| `ollama-phi` | openai_compatible | ollama | phi3:mini |
-| `ollama-gemma` | openai_compatible | ollama | gemma3:4b |
-| `ollama-deepseek-coder` | openai_compatible | ollama | deepseek-coder:6.7b |
+| `ollama-qwen` | openai_compatible | ollama | qwen3.5:9b |
+| `ollama-qwen35` | openai_compatible | ollama | qwen3.5:9b |
+| `ollama-qwen3` | openai_compatible | ollama | qwen3:8b |
+| `ollama-qwen25` | openai_compatible | ollama | qwen2.5:7b-instruct |
+| `ollama-mistral` | openai_compatible | ollama | mistral:7b |
+| `ollama-llama3` | openai_compatible | ollama | llama3:8b |
+| `ollama-deepseek-coder` | openai_compatible | ollama | deepseek-coder:6.7b-instruct |
 
 `--preset` overrides `LLM_MODE` / model-related env defaults. `OPENAI_API_KEY` or `LLM_API_KEY` remains required for live providers (except Ollama — see below).
 
@@ -101,15 +104,16 @@ uv run python main.py "Your question" --preset openrouter-sonnet  # needs LLM_AP
 
 Uses the existing `openai_compatible` path against Ollama’s OpenAI API (`http://localhost:11434/v1`). No native Ollama SDK.
 
-1. Install [Ollama](https://ollama.com) and pull a model, e.g. `ollama pull qwen2.5:7b`
-2. Set `LLM_API_KEY=ollama` (dummy value — Ollama does not validate it), or omit it (presets default to `ollama`)
-3. Run:
+1. Install [Ollama](https://ollama.com) and pull a model, e.g. `ollama pull qwen3.5:9b`
+2. Run `ollama list` and confirm the **NAME** column matches the preset model exactly (e.g. `qwen3.5:9b`, not `qwen2.5:7b`)
+3. Set `LLM_API_KEY=ollama` (dummy value — Ollama does not validate it), or omit it (presets default to `ollama`)
+4. Run:
 
 ```bash
 uv run python main.py "Your question" --preset ollama-qwen
 ```
 
-Default model tags in presets (`qwen2.5:7b`, `phi3:mini`, etc.) match common pulls. If your `ollama list` names differ, edit `council/model_presets.py` or override with manual `LLM_MODEL` env + `openai_compatible` mode.
+If smoke or run fails with a model-not-found error, compare the preset model in `council/model_presets.py` to `ollama list` output character-for-character, or override with `LLM_MODEL=<exact-name>` and `openai_compatible` mode.
 
 #### Local model troubleshooting (JSON / Ollama)
 
@@ -267,7 +271,7 @@ uv run python main.py "Should we build an internal council tool first?" --preset
 ### Ollama with debate (local)
 
 ```bash
-# Requires Ollama running with model pulled, e.g. ollama pull qwen2.5:7b
+# Requires Ollama running with model pulled, e.g. ollama pull qwen3.5:9b
 uv run python main.py "Your decision question" --preset ollama-qwen --debate-rounds 2
 ```
 

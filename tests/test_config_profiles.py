@@ -88,7 +88,7 @@ def test_run_profile_applies_values(tmp_path: Path) -> None:
     settings = resolve_settings_with_profile(base, profile=profile, cli_preset=None)
     assert settings.llm_mode == "openai_compatible"
     assert settings.llm_provider_name == "ollama"
-    assert settings.llm_model == "qwen2.5:7b"
+    assert settings.llm_model == "qwen3.5:9b"
 
 
 def test_preset_overrides_profile_routing(tmp_path: Path) -> None:

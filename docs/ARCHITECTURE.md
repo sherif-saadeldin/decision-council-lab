@@ -139,9 +139,9 @@ Configuration errors:
 ### Ollama presets (Slice 3.2)
 
 - Reuse `openai_compatible` + `OpenAICompatibleProvider` with `base_url=http://localhost:11434/v1`
-- Presets: `ollama-qwen`, `ollama-phi`, `ollama-gemma`, `ollama-deepseek-coder`
+- Presets: `ollama-qwen`, `ollama-qwen35`, `ollama-qwen3`, `ollama-qwen25`, `ollama-mistral`, `ollama-llama3`, `ollama-deepseek-coder`
 - `LLM_API_KEY=ollama` is sufficient (dummy); defaults to `ollama` when unset for Ollama presets
-- Model tags in presets are editable defaults — local `ollama list` names may differ
+- Preset model strings must exactly match `ollama list` NAME column — edit `council/model_presets.py` if yours differ
 
 ### OpenAI-compatible stack (Slice 2 + 3)
 

@@ -65,41 +65,65 @@ MODEL_PRESETS: dict[str, ModelPreset] = {
         base_url=OPENROUTER_BASE_URL,
         model="qwen/qwen-2.5-72b-instruct",
     ),
-    # Ollama: default model tags match common `ollama pull` names — edit if your local tags differ.
+    # Ollama: model tags must exactly match `ollama list` — edit presets if your tags differ.
     "ollama-qwen": ModelPreset(
         name="ollama-qwen",
         llm_mode="openai_compatible",
         provider_name="ollama",
         base_url=OLLAMA_BASE_URL,
-        model="qwen2.5:7b",
+        model="qwen3.5:9b",
     ),
-    "ollama-phi": ModelPreset(
-        name="ollama-phi",
+    "ollama-qwen35": ModelPreset(
+        name="ollama-qwen35",
         llm_mode="openai_compatible",
         provider_name="ollama",
         base_url=OLLAMA_BASE_URL,
-        model="phi3:mini",
+        model="qwen3.5:9b",
     ),
-    "ollama-gemma": ModelPreset(
-        name="ollama-gemma",
+    "ollama-qwen3": ModelPreset(
+        name="ollama-qwen3",
         llm_mode="openai_compatible",
         provider_name="ollama",
         base_url=OLLAMA_BASE_URL,
-        model="gemma3:4b",
+        model="qwen3:8b",
+    ),
+    "ollama-qwen25": ModelPreset(
+        name="ollama-qwen25",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="qwen2.5:7b-instruct",
+    ),
+    "ollama-mistral": ModelPreset(
+        name="ollama-mistral",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="mistral:7b",
+    ),
+    "ollama-llama3": ModelPreset(
+        name="ollama-llama3",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="llama3:8b",
     ),
     "ollama-deepseek-coder": ModelPreset(
         name="ollama-deepseek-coder",
         llm_mode="openai_compatible",
         provider_name="ollama",
         base_url=OLLAMA_BASE_URL,
-        model="deepseek-coder:6.7b",
+        model="deepseek-coder:6.7b-instruct",
     ),
 }
 
 OLLAMA_PRESET_NAMES: tuple[str, ...] = (
     "ollama-qwen",
-    "ollama-phi",
-    "ollama-gemma",
+    "ollama-qwen35",
+    "ollama-qwen3",
+    "ollama-qwen25",
+    "ollama-mistral",
+    "ollama-llama3",
     "ollama-deepseek-coder",
 )
 

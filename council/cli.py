@@ -517,7 +517,7 @@ def render_preset_list(console: Console) -> None:
         "Env wins over keyring. Ollama presets accept LLM_API_KEY=ollama (or omit — defaults locally)."
     )
     console.print(
-        "Ollama model tags are defaults — run `ollama list` and edit presets if your tags differ."
+        "Ollama preset models must match `ollama list` exactly — edit council/model_presets.py if needed."
     )
 
 

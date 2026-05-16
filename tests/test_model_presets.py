@@ -79,8 +79,8 @@ def test_list_presets_main(capsys) -> None:
     assert "Model presets" in captured.out
     assert "mock" in captured.out
     assert "ollama-qwen" in captured.out
-    assert "ollama-phi" in captured.out
-    assert "ollama-gemma" in captured.out
+    assert "ollama-qwen35" in captured.out
+    assert "ollama-mistra" in captured.out or "mistral:7b" in captured.out
     assert "ollama-deeps" in captured.out  # Rich may truncate ollama-deepseek-coder
     assert "localhost:11434" in captured.out or "http://localh" in captured.out
     assert len(list_preset_names()) == len(EXPECTED_PRESETS)
@@ -150,11 +150,11 @@ def test_ollama_preset_apply_defaults_dummy_api_key_when_missing() -> None:
         "ollama-qwen",
     )
     assert settings.llm_api_key == OLLAMA_DUMMY_API_KEY
-    assert settings.llm_model == "qwen2.5:7b"
+    assert settings.llm_model == "qwen3.5:9b"
 
 
 def test_ollama_preset_provider_metadata_with_dummy_key() -> None:
-    settings = apply_preset(Settings.from_env(), "ollama-phi")
+    settings = apply_preset(Settings.from_env(), "ollama-mistral")
     settings = Settings(
         llm_mode=settings.llm_mode,
         runs_dir=Path("./runs"),
@@ -167,7 +167,24 @@ def test_ollama_preset_provider_metadata_with_dummy_key() -> None:
     provider = create_provider(settings)
     assert provider.metadata.provider_name == "ollama"
     assert provider.metadata.mode == "openai_compatible"
-    assert provider.metadata.model_name == "phi3:mini"
+    assert provider.metadata.model_name == "mistral:7b"
+
+
+@pytest.mark.parametrize(
+    ("preset_name", "expected_model"),
+    [
+        ("ollama-qwen", "qwen3.5:9b"),
+        ("ollama-qwen35", "qwen3.5:9b"),
+        ("ollama-qwen3", "qwen3:8b"),
+        ("ollama-qwen25", "qwen2.5:7b-instruct"),
+        ("ollama-mistral", "mistral:7b"),
+        ("ollama-llama3", "llama3:8b"),
+        ("ollama-deepseek-coder", "deepseek-coder:6.7b-instruct"),
+    ],
+)
+def test_ollama_preset_model_names(preset_name: str, expected_model: str) -> None:
+    settings = apply_preset(Settings.from_env(), preset_name)
+    assert settings.llm_model == expected_model
 
 
 def test_openrouter_preset_provider_metadata() -> None:
