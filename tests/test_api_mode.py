@@ -92,11 +92,11 @@ def test_auto_mode_falls_back_to_chat_on_responses_failure() -> None:
         choices=[MagicMock(message=message)]
     )
     provider = OpenAICompatibleProvider(
-        provider_name="ollama",
-        api_key="ollama",
-        model_name="qwen2.5:7b",
+        provider_name="openrouter",
+        api_key="test-key",
+        model_name="anthropic/claude-sonnet-4.5",
         mode="openai_compatible",
-        base_url="http://localhost:11434/v1",
+        base_url="https://openrouter.ai/api/v1",
         client=client,
         api_mode="auto",
     )
@@ -116,11 +116,11 @@ def test_auto_locks_chat_for_subsequent_calls() -> None:
         choices=[MagicMock(message=message)]
     )
     provider = OpenAICompatibleProvider(
-        provider_name="ollama",
-        api_key="ollama",
-        model_name="qwen2.5:7b",
+        provider_name="openrouter",
+        api_key="test-key",
+        model_name="anthropic/claude-sonnet-4.5",
         mode="openai_compatible",
-        base_url="http://localhost:11434/v1",
+        base_url="https://openrouter.ai/api/v1",
         client=client,
         api_mode="auto",
     )
@@ -159,7 +159,7 @@ def test_repair_json_works_in_chat_mode(tmp_path: Path) -> None:
     assert client.chat.completions.create.call_count == 2
 
 
-def test_factory_defaults_api_mode_auto() -> None:
+def test_factory_resolves_ollama_auto_to_chat() -> None:
     settings = Settings(
         llm_mode="openai_compatible",
         runs_dir=Path("./runs"),
@@ -169,8 +169,8 @@ def test_factory_defaults_api_mode_auto() -> None:
         llm_api_key="ollama",
         llm_model="qwen2.5:7b",
     )
-    provider = create_provider(settings, runtime=RuntimeOptions())
-    assert provider.metadata.api_mode_preference == "auto"
+    provider = create_provider(settings, runtime=RuntimeOptions(api_mode="auto"))
+    assert provider.metadata.api_mode_preference == "chat"
 
 
 def test_runtime_options_passes_chat_mode() -> None:

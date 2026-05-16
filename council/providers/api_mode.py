@@ -26,6 +26,17 @@ def normalize_api_mode(value: str | None) -> ApiModePreference:
     return normalized  # type: ignore[return-value]
 
 
+def resolve_effective_api_mode(
+    preference: ApiModePreference,
+    *,
+    provider_name: str,
+) -> ApiModePreference:
+    """Ollama implements chat completions reliably; auto should not probe Responses first."""
+    if preference == "auto" and provider_name == "ollama":
+        return "chat"
+    return preference
+
+
 def should_fallback_to_chat(
     exc: BaseException,
     *,

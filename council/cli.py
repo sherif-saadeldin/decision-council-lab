@@ -544,6 +544,8 @@ def render_smoke_report(console: Console, report: SmokeReport) -> None:
         table.add_row("JSON artifact", report.run_json_path or "—")
         table.add_row("Markdown artifact", report.run_md_path or "—")
     else:
+        if report.failed_stage:
+            table.add_row("Failed stage", report.failed_stage)
         if report.api_mode_preference:
             table.add_row("API mode (preference)", report.api_mode_preference)
         if report.failure_reason:

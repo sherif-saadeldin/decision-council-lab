@@ -25,3 +25,16 @@ class ConsoleProgressReporter:
 class NullProgressReporter:
     def on_stage(self, stage: str) -> None:
         return
+
+
+class StageTrackingProgress:
+    """Tracks the latest stage while optionally delegating to another reporter."""
+
+    def __init__(self, inner: ProgressReporter | None = None) -> None:
+        self._inner = inner
+        self.current_stage = "init"
+
+    def on_stage(self, stage: str) -> None:
+        self.current_stage = stage
+        if self._inner is not None:
+            self._inner.on_stage(stage)

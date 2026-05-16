@@ -7,7 +7,16 @@ from enum import Enum
 from typing import Callable
 
 from council.config import Settings
+from council.credentials import is_ollama_openai_compatible
 from council.model_presets import OLLAMA_BASE_URL, list_preset_names
+from council.ollama_probe import (
+    TagsFetcher,
+    default_tags_fetcher,
+    format_missing_model_message,
+    model_is_installed,
+    ollama_tags_url,
+)
+from council.providers.api_mode import resolve_effective_api_mode
 from council.secrets import credential_source
 from council.models import RUN_SCHEMA_VERSION
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
@@ -52,10 +61,12 @@ def run_doctor(
     *,
     live: bool = False,
     http_probe: Callable[[str, float], tuple[bool, str]] | None = None,
+    tags_fetcher: TagsFetcher | None = None,
     runtime: RuntimeOptions | None = None,
 ) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
     probe = http_probe or _default_http_probe
+    fetch_tags = tags_fetcher or default_tags_fetcher
 
     checks.append(
         DoctorCheck(
@@ -86,13 +97,19 @@ def run_doctor(
     checks.append(_api_mode_check(settings, runtime))
 
     if settings.llm_mode == "openai_compatible" and settings.llm_provider_name == "ollama":
-        checks.append(_ollama_reachability_check(settings, probe))
+        checks.extend(_ollama_checks(settings, fetch_tags))
     elif settings.llm_mode == "openai_compatible" and settings.llm_base_url:
+        models_url = settings.llm_base_url.rstrip("/") + "/models"
+        ok, detail = probe(models_url, 5.0)
         checks.append(
             DoctorCheck(
                 name="base_url",
-                status=CheckStatus.OK,
-                message=f"LLM_BASE_URL configured ({settings.llm_base_url})",
+                status=CheckStatus.OK if ok else CheckStatus.WARN,
+                message=(
+                    f"Reachable ({settings.llm_base_url})"
+                    if ok
+                    else f"Could not reach {settings.llm_base_url}: {detail}"
+                ),
             )
         )
 
@@ -126,9 +143,18 @@ def _credential_checks(settings: Settings) -> list[DoctorCheck]:
         checks.append(_credential_source_check("OPENAI_API_KEY", required_for="openai mode"))
         return checks
 
-    checks.append(
-        _credential_source_check("LLM_API_KEY", required_for="openai_compatible mode"),
-    )
+    if is_ollama_openai_compatible(settings):
+        checks.append(
+            DoctorCheck(
+                name="LLM_API_KEY",
+                status=CheckStatus.OK,
+                message="source: not required for Ollama",
+            )
+        )
+    else:
+        checks.append(
+            _credential_source_check("LLM_API_KEY", required_for="openai_compatible mode"),
+        )
     base_ok = bool(settings.llm_base_url)
     checks.append(
         DoctorCheck(
@@ -148,18 +174,65 @@ def _credential_checks(settings: Settings) -> list[DoctorCheck]:
     return checks
 
 
-def _ollama_reachability_check(
-    settings: Settings,
-    probe: Callable[[str, float], tuple[bool, str]],
-) -> DoctorCheck:
+def _ollama_checks(settings: Settings, fetch_tags: TagsFetcher) -> list[DoctorCheck]:
     base = settings.llm_base_url or OLLAMA_BASE_URL
-    url = base.rstrip("/") + "/models"
-    ok, detail = probe(url, 3.0)
-    return DoctorCheck(
-        name="ollama",
-        status=CheckStatus.OK if ok else CheckStatus.WARN,
-        message=detail if ok else f"Could not reach Ollama at {base}: {detail}",
+    tags_url = ollama_tags_url(base)
+    ok, installed, detail = fetch_tags(tags_url, 5.0)
+    checks: list[DoctorCheck] = []
+    if not ok:
+        checks.append(
+            DoctorCheck(
+                name="ollama",
+                status=CheckStatus.FAIL,
+                message=f"Could not reach Ollama at {base} ({tags_url}): {detail}",
+            )
+        )
+        checks.append(
+            DoctorCheck(
+                name="ollama_model",
+                status=CheckStatus.SKIP,
+                message="Skipped — Ollama endpoint unreachable.",
+            )
+        )
+        return checks
+
+    checks.append(
+        DoctorCheck(
+            name="ollama",
+            status=CheckStatus.OK,
+            message=f"Reachable at {base} ({detail})",
+        )
     )
+
+    configured = settings.llm_model or ""
+    if not configured:
+        checks.append(
+            DoctorCheck(
+                name="ollama_model",
+                status=CheckStatus.FAIL,
+                message="LLM_MODEL is not set.",
+            )
+        )
+        return checks
+
+    names = installed or []
+    if model_is_installed(configured, names):
+        checks.append(
+            DoctorCheck(
+                name="ollama_model",
+                status=CheckStatus.OK,
+                message=f"Model {configured!r} is installed.",
+            )
+        )
+    else:
+        checks.append(
+            DoctorCheck(
+                name="ollama_model",
+                status=CheckStatus.FAIL,
+                message=format_missing_model_message(configured, names),
+            )
+        )
+    return checks
 
 
 def _api_mode_check(settings: Settings, runtime: RuntimeOptions | None) -> DoctorCheck:
@@ -171,8 +244,10 @@ def _api_mode_check(settings: Settings, runtime: RuntimeOptions | None) -> Docto
         )
     preference = runtime.api_mode if runtime is not None else "auto"
     if settings.llm_mode == "openai_compatible" and settings.llm_provider_name == "ollama":
+        effective = resolve_effective_api_mode(preference, provider_name="ollama")
         detail = (
-            f"preference={preference!r} (Ollama: auto tries Responses, falls back to chat completions)"
+            f"preference={preference!r}, effective={effective!r} "
+            "(Ollama uses chat completions; auto resolves to chat)"
         )
     else:
         detail = f"preference={preference!r} (auto tries Responses API, may fall back to chat)"

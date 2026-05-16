@@ -6,9 +6,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from council.config import Settings
 
+from council.credentials import OLLAMA_DUMMY_API_KEY, resolve_llm_api_key  # noqa: F401
+
+__all__ = ("OLLAMA_DUMMY_API_KEY", "OLLAMA_BASE_URL", "MODEL_PRESETS", "OLLAMA_PRESET_NAMES")
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
-OLLAMA_DUMMY_API_KEY = "ollama"
 
 
 @dataclass(frozen=True)
@@ -171,9 +174,6 @@ def apply_preset(settings: "Settings", preset_name: str) -> "Settings":
             llm_model=settings.llm_model,
         )
     if preset.llm_mode == "openai_compatible":
-        llm_api_key = settings.llm_api_key
-        if not llm_api_key and preset.provider_name == "ollama":
-            llm_api_key = OLLAMA_DUMMY_API_KEY
         return Settings(
             llm_mode="openai_compatible",
             runs_dir=settings.runs_dir,
@@ -182,7 +182,17 @@ def apply_preset(settings: "Settings", preset_name: str) -> "Settings":
             openai_model=settings.openai_model,
             llm_provider_name=preset.provider_name,
             llm_base_url=preset.base_url,
-            llm_api_key=llm_api_key,
+            llm_api_key=resolve_llm_api_key(
+                Settings(
+                    llm_mode="openai_compatible",
+                    runs_dir=settings.runs_dir,
+                    mock_model=settings.mock_model,
+                    llm_provider_name=preset.provider_name,
+                    llm_base_url=preset.base_url,
+                    llm_api_key=settings.llm_api_key,
+                    llm_model=preset.model,
+                )
+            ),
             llm_model=preset.model,
         )
     msg = f"Unsupported preset mode: {preset.llm_mode}"

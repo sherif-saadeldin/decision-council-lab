@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from council.config import Settings
-from council.runtime import RuntimeOptions
+from council.credentials import resolve_llm_api_key
+from council.providers.api_mode import resolve_effective_api_mode
+from council.runtime import RuntimeOptions, cap_retries_for_provider
 from council.providers.base import LLMProvider
 from council.providers.errors import (
     MissingProviderConfigError,
@@ -40,23 +42,28 @@ def create_provider(
         )
     if mode == "openai_compatible":
         provider_name = settings.llm_provider_name
-        if not settings.llm_api_key:
+        api_key = resolve_llm_api_key(settings)
+        if not api_key:
             raise MissingProviderCredentialError(provider_name, "LLM_API_KEY")
         if not settings.llm_base_url:
             raise MissingProviderConfigError(provider_name, "LLM_BASE_URL")
         if not settings.llm_model:
             raise MissingProviderConfigError(provider_name, "LLM_MODEL")
+        effective_api_mode = resolve_effective_api_mode(
+            runtime.api_mode,
+            provider_name=provider_name,
+        )
         return OpenAICompatibleProvider(
             provider_name=provider_name,
-            api_key=settings.llm_api_key,
+            api_key=api_key,
             model_name=settings.llm_model,
             mode=mode,
             base_url=settings.llm_base_url,
             credential_env="LLM_API_KEY",
             timeout_seconds=runtime.timeout_seconds,
-            max_retries=runtime.max_retries,
+            max_retries=cap_retries_for_provider(runtime.max_retries, provider_name),
             runs_dir=settings.runs_dir,
             repair_json=runtime.repair_json,
-            api_mode=runtime.api_mode,
+            api_mode=effective_api_mode,
         )
     raise UnsupportedProviderModeError(mode, SUPPORTED_LLM_MODES)

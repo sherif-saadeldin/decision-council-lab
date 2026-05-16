@@ -376,8 +376,9 @@ def _safe_error_message(exc: Exception, settings: Settings) -> str:
         message = exc.detail
     else:
         message = str(exc)
-    secrets = [key for key in (settings.openai_api_key, settings.llm_api_key) if key]
-    return redact_secrets(message, secrets)
+    from council.credentials import redaction_secrets, strip_ollama_dummy_from_text
+
+    return strip_ollama_dummy_from_text(redact_secrets(message, redaction_secrets(settings)))
 
 
 def _settings_with_runs_dir(settings: Settings, runs_dir: Path) -> Settings:

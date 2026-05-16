@@ -102,9 +102,11 @@ def test_repair_json_retries_once_on_parse_failure(tmp_path: Path) -> None:
     client = MagicMock()
     invalid = "Sure! " + json.dumps({**VALID_BRIEF, "confidence": "high"})
     valid = json.dumps(VALID_BRIEF)
-    client.responses.create.side_effect = [
-        MagicMock(output_text=invalid),
-        MagicMock(output_text=valid),
+    message_invalid = MagicMock(content=invalid)
+    message_valid = MagicMock(content=valid)
+    client.chat.completions.create.side_effect = [
+        MagicMock(choices=[MagicMock(message=message_invalid)]),
+        MagicMock(choices=[MagicMock(message=message_valid)]),
     ]
     provider = OpenAICompatibleProvider(
         provider_name="ollama",
@@ -115,6 +117,7 @@ def test_repair_json_retries_once_on_parse_failure(tmp_path: Path) -> None:
         client=client,
         runs_dir=tmp_path,
         repair_json=True,
+        api_mode="chat",
     )
     response = provider.complete(
         ProviderRequest(
@@ -125,9 +128,9 @@ def test_repair_json_retries_once_on_parse_failure(tmp_path: Path) -> None:
         )
     )
     assert response.brief.headline == "Smoke headline"
-    assert client.responses.create.call_count == 2
-    repair_instructions = client.responses.create.call_args_list[1].kwargs["instructions"]
-    assert "ONLY valid JSON" in repair_instructions
+    assert client.chat.completions.create.call_count == 2
+    repair_messages = client.chat.completions.create.call_args_list[1].kwargs["messages"]
+    assert "ONLY valid JSON" in repair_messages[0]["content"]
 
 
 def test_repair_json_not_used_for_openai_mode(tmp_path: Path) -> None:

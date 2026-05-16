@@ -8,15 +8,17 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from council.config import Settings
+from council.doctor import CheckStatus, DoctorCheck, run_doctor
 from council.engine import run_council
 from council.model_presets import apply_preset, get_preset
 from council.models import CouncilRunResult
-from council.progress import NullProgressReporter
+from council.progress import NullProgressReporter, StageTrackingProgress
 from council.providers.errors import ProviderResponseError
 from council.providers.failures import classify_provider_failure
+from council.credentials import redaction_secrets, strip_ollama_dummy_from_text
 from council.redaction import redact_secrets
 from council.providers.api_mode import normalize_api_mode
-from council.runtime import DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
+from council.runtime import DEFAULT_SMOKE_MAX_RUN_SECONDS, DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
 from council.storage import save_run
 
 DEFAULT_SMOKE_QUESTION = (
@@ -25,6 +27,7 @@ DEFAULT_SMOKE_QUESTION = (
 
 RunCouncilFn = Callable[..., tuple[CouncilRunResult, object | None]]
 SaveRunFn = Callable[[CouncilRunResult, Settings | None], tuple[Path, Path]]
+DoctorFn = Callable[..., list[DoctorCheck]]
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,7 @@ class SmokeRequest:
     timeout_seconds: float | None = None
     repair_json: bool = False
     api_mode: str = "auto"
+    skip_preflight: bool = False
 
 
 class SmokeReport(BaseModel):
@@ -54,8 +58,25 @@ class SmokeReport(BaseModel):
     has_proposed_metrics: bool = False
     error: str | None = None
     failure_reason: str | None = None
+    failed_stage: str | None = None
     api_mode_preference: str | None = None
     api_mode_used: str | None = None
+
+
+def run_smoke_preflight(
+    settings: Settings,
+    runtime: RuntimeOptions,
+    *,
+    doctor_fn: DoctorFn = run_doctor,
+) -> tuple[bool, str | None, str | None]:
+    if settings.llm_mode == "mock":
+        return True, None, None
+    checks = doctor_fn(settings, runtime=runtime)
+    blocking = [check for check in checks if check.status == CheckStatus.FAIL]
+    if not blocking:
+        return True, None, None
+    first = blocking[0]
+    return False, first.name, first.message
 
 
 def run_smoke(
@@ -63,28 +84,55 @@ def run_smoke(
     *,
     run_council_fn: RunCouncilFn = run_council,
     save_run_fn: SaveRunFn = save_run,
+    doctor_fn: DoctorFn = run_doctor,
 ) -> SmokeReport:
     """Run a single live-provider smoke check. Intended for manual CLI use only."""
     preset_meta = get_preset(request.preset)
     started = time.perf_counter()
     settings: Settings | None = None
+    progress = StageTrackingProgress(NullProgressReporter())
     try:
         settings = _resolve_smoke_settings(request)
         runtime = RuntimeOptions(
             timeout_seconds=request.timeout_seconds or DEFAULT_TIMEOUT_SECONDS,
             max_retries=0,
-            fast_mode=False,
+            fast_mode=True,
             show_progress=False,
             repair_json=request.repair_json,
             api_mode=normalize_api_mode(request.api_mode),
+            max_run_seconds=DEFAULT_SMOKE_MAX_RUN_SECONDS,
         )
+        if not request.skip_preflight:
+            progress.on_stage("preflight")
+            ok, failed_stage, message = run_smoke_preflight(
+                settings,
+                runtime,
+                doctor_fn=doctor_fn,
+            )
+            if not ok:
+                elapsed = time.perf_counter() - started
+                return SmokeReport(
+                    success=False,
+                    preset=request.preset,
+                    question=request.question.strip(),
+                    provider_name=preset_meta.provider_name,
+                    model_name=preset_meta.model,
+                    elapsed_seconds=elapsed,
+                    error=message,
+                    failure_reason="preflight_failure",
+                    failed_stage=failed_stage,
+                    api_mode_preference=normalize_api_mode(request.api_mode),
+                )
+
+        progress.on_stage("council")
         result, _ = run_council_fn(
             request.question.strip(),
             settings=settings,
             debate_rounds=max(0, request.debate_rounds),
             runtime=runtime,
-            progress=NullProgressReporter(),
+            progress=progress,
         )
+        progress.on_stage("save")
         json_path, md_path = save_run_fn(result, settings)
         elapsed = time.perf_counter() - started
         dossier = result.dossier
@@ -118,6 +166,7 @@ def run_smoke(
             elapsed_seconds=elapsed,
             error=_safe_error_message(exc, settings_for_redaction),
             failure_reason=classify_provider_failure(exc),
+            failed_stage=progress.current_stage,
             api_mode_preference=normalize_api_mode(request.api_mode),
         )
 
@@ -146,8 +195,7 @@ def _safe_error_message(exc: Exception, settings: Settings) -> str:
         message = exc.detail
     else:
         message = str(exc)
-    secrets = [key for key in (settings.openai_api_key, settings.llm_api_key) if key]
-    return redact_secrets(message, secrets)
+    return strip_ollama_dummy_from_text(redact_secrets(message, redaction_secrets(settings)))
 
 
 def _settings_with_runs_dir(settings: Settings, runs_dir: Path) -> Settings:

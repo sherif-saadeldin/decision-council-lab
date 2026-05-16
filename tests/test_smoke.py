@@ -183,7 +183,7 @@ def test_run_smoke_failure_from_runner_without_network(tmp_path: Path) -> None:
         raise MissingProviderCredentialError("openai", "OPENAI_API_KEY")
 
     report = run_smoke(
-        SmokeRequest(preset="openai-mini", runs_dir=tmp_path),
+        SmokeRequest(preset="openai-mini", runs_dir=tmp_path, skip_preflight=True),
         run_council_fn=failing_run,
         save_run_fn=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not save")),
     )

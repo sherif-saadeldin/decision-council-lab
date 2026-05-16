@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import TypedDict
 from uuid import uuid4
 
@@ -20,7 +21,7 @@ from council.prompt_debug import PromptDebugCollector
 from council.providers.base import LLMProvider
 from council.providers.factory import create_provider
 from council.providers.models import ProviderRequest, ProviderResponse
-from council.runtime import FAST_DEBATE_ROUNDS, RuntimeOptions
+from council.runtime import FAST_DEBATE_ROUNDS, RunBudgetExceededError, RuntimeOptions
 
 AGENT_PIPELINE: tuple[AgentRole, ...] = (
     AgentRole.CONTEXT,
@@ -48,8 +49,24 @@ def get_provider(
     return create_provider(settings, runtime=runtime)
 
 
-def _make_agent_node(role: AgentRole, provider: LLMProvider, progress: ProgressReporter | None):
+def _check_run_budget(runtime: RuntimeOptions, run_started: float) -> None:
+    if runtime.max_run_seconds is None:
+        return
+    elapsed = time.perf_counter() - run_started
+    if elapsed > runtime.max_run_seconds:
+        raise RunBudgetExceededError(runtime.max_run_seconds)
+
+
+def _make_agent_node(
+    role: AgentRole,
+    provider: LLMProvider,
+    progress: ProgressReporter | None,
+    *,
+    runtime: RuntimeOptions,
+    run_started: float,
+):
     def node(state: CouncilState) -> dict[str, list[AgentBrief] | list[ProviderResponse]]:
+        _check_run_budget(runtime, run_started)
         if progress is not None:
             progress.on_stage(role.value)
         response = provider.complete(
@@ -73,13 +90,21 @@ def _make_agent_node(role: AgentRole, provider: LLMProvider, progress: ProgressR
 def build_agent_graph(
     provider: LLMProvider,
     progress: ProgressReporter | None = None,
+    *,
+    runtime: RuntimeOptions | None = None,
+    run_started: float | None = None,
 ) -> StateGraph:
+    runtime = runtime or RuntimeOptions()
+    started = run_started if run_started is not None else time.perf_counter()
     graph = StateGraph(CouncilState)
     previous = START
 
     for role in AGENT_PIPELINE:
         node_name = role.value
-        graph.add_node(node_name, _make_agent_node(role, provider, progress))
+        graph.add_node(
+            node_name,
+            _make_agent_node(role, provider, progress, runtime=runtime, run_started=started),
+        )
         graph.add_edge(previous, node_name)
         previous = node_name
 
@@ -103,8 +128,14 @@ def run_council(
     run_id = str(uuid4())
     debug_collector = PromptDebugCollector() if save_prompt_debug else None
     fast_mode = runtime.fast_mode
+    run_started = time.perf_counter()
 
-    graph = build_agent_graph(provider, progress=progress)
+    graph = build_agent_graph(
+        provider,
+        progress=progress,
+        runtime=runtime,
+        run_started=run_started,
+    )
     app = graph.compile()
 
     final_state = app.invoke(
@@ -120,6 +151,7 @@ def run_council(
 
     briefs = final_state["briefs"]
     debate_transcript: DebateTranscript | None = None
+    _check_run_budget(runtime, run_started)
     if debate_rounds > 0:
         debate_transcript = run_debate(
             provider,
@@ -131,6 +163,7 @@ def run_council(
             progress=progress,
         )
 
+    _check_run_budget(runtime, run_started)
     if progress is not None:
         progress.on_stage("chair")
 

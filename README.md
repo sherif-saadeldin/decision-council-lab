@@ -136,7 +136,7 @@ Ollama and some gateways implement `/v1/chat/completions` more reliably than the
 
 | Mode | Behavior |
 |------|----------|
-| `auto` (default) | Try Responses API first; fall back once to chat completions on compatible failures (recommended for Ollama) |
+| `auto` (default) | Try Responses API first; fall back once to chat completions on compatible failures. For Ollama, `auto` resolves to `chat` immediately (no Responses probe). |
 | `responses` | Responses API only (OpenAI direct, OpenRouter when supported) |
 | `chat` | Chat completions only (`/v1/chat/completions`) |
 
@@ -208,7 +208,7 @@ uv run python main.py smoke --preset ollama-qwen --question "Your question?"
 uv run python main.py smoke --preset openai-mini --timeout-seconds 90 --debate-rounds 0
 ```
 
-Reports provider, model, elapsed time, run paths, decision summary, quality-field presence, and **failure reason** on error. Use `--repair-json` for one extra JSON-only retry on compatible providers. Exit `0` on success, `1` on failure. Secrets are never printed.
+Runs **doctor preflight** for live providers (reachability, Ollama `/api/tags`, model match) before any LLM calls. Reports **failed stage** on error (`preflight`, agent stage, `chair`, etc.). Uses `debate-rounds 0` and fast mode by default. Exit `0` on success, `1` on failure. Secrets are never printed.
 
 ### Secrets (OS keyring)
 
@@ -307,6 +307,22 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full contract.
 ## Troubleshooting (providers)
 
 Controlled provider errors print a **single clean message** (no Python traceback). Use `--quiet` for a one-line error on stderr.
+
+### Stuck or slow Ollama runs
+
+| Symptom | What to do |
+|---------|------------|
+| Command hangs with no output | Press **Ctrl+C** once and wait a few seconds. If the shell still feels blocked, open a new terminal. |
+| Smoke/run never finishes | Run `doctor` first: `uv run python main.py doctor --preset ollama-qwen` — checks `/api/tags`, model name, and reachability. |
+| Wrong model name | Doctor lists installed models from Ollama. Match preset model to `ollama list` exactly, or `ollama pull <model>`. |
+| Each stage very slow | Lower per-request timeout: `--timeout-seconds 60`. Smoke defaults to `debate-rounds 0` and skips debate in fast mode. |
+| JSON repair doubles latency | Omit `--repair-json` unless parsing fails; repair adds one extra LLM call per failed stage. |
+| Responses API timeouts | Use `--api-mode chat` (Ollama `auto` already uses chat). |
+
+```bash
+uv run python main.py doctor --preset ollama-qwen
+uv run python main.py smoke --preset ollama-qwen --api-mode chat --timeout-seconds 60 --debate-rounds 0
+```
 
 | Symptom | What to do |
 |---------|------------|

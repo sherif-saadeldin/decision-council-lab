@@ -8,6 +8,7 @@ from typing import Any, NoReturn, TypeVar, cast
 
 from openai import OpenAI
 
+from council.credentials import is_ollama_dummy_key
 from council.debate_prompts import (
     DEBATE_ROUND_JSON_SCHEMA,
     debate_round_instructions,
@@ -104,9 +105,14 @@ class OpenAICompatibleProvider(LLMProvider):
                 api_key=api_key,
                 base_url=base_url,
                 timeout=timeout_seconds,
+                max_retries=0,
             )
         else:
-            self._client = OpenAI(api_key=api_key, timeout=timeout_seconds)
+            self._client = OpenAI(
+                api_key=api_key,
+                timeout=timeout_seconds,
+                max_retries=0,
+            )
         self._metadata = ProviderMetadata(
             provider_name=provider_name,
             model_name=model_name,
@@ -294,6 +300,8 @@ class OpenAICompatibleProvider(LLMProvider):
             return "responses"
         if self._api_mode_locked is not None:
             return self._api_mode_locked
+        if self._metadata.provider_name == "ollama":
+            return "chat"
         return "responses"
 
     def _parse_with_recovery(
@@ -322,11 +330,16 @@ class OpenAICompatibleProvider(LLMProvider):
     def _save_raw_on_failure(self, run_id: str | None, raw_text: str) -> None:
         if not run_id or self._runs_dir is None:
             return
+        secrets = (
+            [self._api_key]
+            if self._api_key and not is_ollama_dummy_key(self._api_key)
+            else None
+        )
         save_raw_response(
             self._runs_dir,
             run_id,
             raw_text,
-            [self._api_key] if self._api_key else None,
+            secrets,
         )
 
     def _call_structured_json(
@@ -458,6 +471,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     model=self._metadata.model_name,
                     messages=cast(Any, messages),
                     temperature=0,
+                    stream=False,
                     timeout=self._timeout_seconds,
                 )
                 choice = response.choices[0] if response.choices else None

@@ -164,13 +164,16 @@ def test_timeout_error_mapping() -> None:
     assert message == "Provider request timed out after 30 seconds."
 
 
-def test_doctor_ollama_uses_probe_without_network() -> None:
+def test_doctor_ollama_uses_tags_without_network() -> None:
     settings = resolve_doctor_settings(preset="ollama-qwen")
 
-    def fake_probe(url: str, timeout: float) -> tuple[bool, str]:
+    def fake_tags(url: str, timeout: float) -> tuple[bool, list[str] | None, str]:
+        assert "/api/tags" in url
         assert "localhost" in url
-        return True, "reachable (mocked)"
+        return True, ["qwen3.5:9b"], "Found 1 installed model(s)"
 
-    checks = run_doctor(settings, http_probe=fake_probe)
+    checks = run_doctor(settings, tags_fetcher=fake_tags)
     ollama = next(c for c in checks if c.name == "ollama")
+    model = next(c for c in checks if c.name == "ollama_model")
     assert ollama.status == CheckStatus.OK
+    assert model.status == CheckStatus.OK
