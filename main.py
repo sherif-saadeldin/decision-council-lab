@@ -6,6 +6,7 @@ from council.cli import (
     KNOWN_PROJECT_ERRORS,
     build_parser,
     render_known_error,
+    render_preset_list,
     render_result,
     resolve_settings,
 )
@@ -19,6 +20,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     console = Console()
     error_console = Console(stderr=True)
+
+    if args.list_presets:
+        render_preset_list(console)
+        return 0
 
     if not args.question or not args.question.strip():
         parser.print_help()
@@ -37,7 +42,11 @@ def main(argv: list[str] | None = None) -> int:
 
         prompt_debug_path = None
         if args.save_prompt_debug and debug_collector is not None:
-            secrets = [settings.openai_api_key] if settings.openai_api_key else []
+            secrets = [
+                key
+                for key in (settings.openai_api_key, settings.llm_api_key)
+                if key
+            ]
             prompt_debug_path = save_prompt_debug(
                 result,
                 debug_collector,

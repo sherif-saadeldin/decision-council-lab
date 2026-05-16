@@ -71,10 +71,34 @@ uv run python main.py "Your decision question"
 
 Swap `LLM_BASE_URL` and `LLM_MODEL` for Groq, Together, Fireworks, DeepInfra, or other OpenAI-compatible endpoints.
 
+## Model presets (Slice 3.1)
+
+Use `--preset` to apply named routing without setting mode/model env vars each time. API keys still come from env only.
+
+```bash
+uv run python main.py --list-presets
+uv run python main.py "Your question" --preset mock
+uv run python main.py "Your question" --preset openai-mini      # needs OPENAI_API_KEY
+uv run python main.py "Your question" --preset openrouter-sonnet  # needs LLM_API_KEY
+```
+
+| Preset | Mode | Provider | Model |
+|--------|------|----------|-------|
+| `mock` | mock | mock | mock-council-v1 |
+| `openai-mini` | openai | openai | gpt-4.1-mini |
+| `openrouter-sonnet` | openai_compatible | openrouter | anthropic/claude-sonnet-4.5 |
+| `openrouter-gemini` | openai_compatible | openrouter | google/gemini-2.5-pro-preview |
+| `openrouter-deepseek` | openai_compatible | openrouter | deepseek/deepseek-chat-v3-0324 |
+| `openrouter-qwen` | openai_compatible | openrouter | qwen/qwen-2.5-72b-instruct |
+
+`--preset` overrides `LLM_MODE` / model-related env defaults. `OPENAI_API_KEY` or `LLM_API_KEY` remains required for live providers.
+
 ### CLI options
 
 ```bash
 uv run python main.py --help
+uv run python main.py --list-presets
+uv run python main.py "Your question" --preset mock
 uv run python main.py "Your question" --runs-dir ./runs
 uv run python main.py "Your question" --quiet
 uv run python main.py "Your question" --save-prompt-debug

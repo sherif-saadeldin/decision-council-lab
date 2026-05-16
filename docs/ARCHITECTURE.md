@@ -62,6 +62,14 @@ Configuration errors:
 - `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` required for `openai_compatible` mode
 - `LLM_PROVIDER_NAME` sets metadata `provider_name` (e.g. `openrouter`, `groq`)
 
+### Model presets (Slice 3.1)
+
+- Registry: `council/model_presets.py`
+- CLI: `--preset NAME` overrides `LLM_MODE`, provider name, base URL, and model
+- CLI: `--list-presets` prints preset table (no API keys required)
+- Secrets never stored in presets — `OPENAI_API_KEY` / `LLM_API_KEY` from env only
+- Unknown preset → `UnknownModelPresetError` (clean CLI error, no traceback)
+
 ### OpenAI-compatible stack (Slice 2 + 3)
 
 - Shared implementation: `OpenAICompatibleProvider` in `council/providers/openai_compatible.py`

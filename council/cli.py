@@ -8,17 +8,20 @@ from rich.panel import Panel
 from rich.table import Table
 
 from council.config import Settings
+from council.model_presets import MODEL_PRESETS, apply_preset, list_preset_names
 from council.models import CouncilRunResult
 from council.providers.errors import (
     MissingProviderConfigError,
     MissingProviderCredentialError,
     ProviderResponseError,
+    UnknownModelPresetError,
     UnsupportedProviderModeError,
 )
 
 KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     MissingProviderCredentialError,
     MissingProviderConfigError,
+    UnknownModelPresetError,
     UnsupportedProviderModeError,
     ProviderResponseError,
 )
@@ -53,24 +56,49 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Save prompt/debug context to runs/<run_id>/prompt_debug.md (no secrets).",
     )
+    parser.add_argument(
+        "--preset",
+        metavar="PRESET_NAME",
+        help="Model routing preset (overrides LLM_MODE/model env defaults; keys still from env).",
+    )
+    parser.add_argument(
+        "--list-presets",
+        action="store_true",
+        help="List available model presets and exit.",
+    )
     return parser
 
 
 def resolve_settings(args: argparse.Namespace) -> Settings:
     base = Settings.from_env()
-    if args.runs_dir is None:
-        return base
-    return Settings(
-        llm_mode=base.llm_mode,
-        runs_dir=args.runs_dir,
-        mock_model=base.mock_model,
-        openai_api_key=base.openai_api_key,
-        openai_model=base.openai_model,
-        llm_provider_name=base.llm_provider_name,
-        llm_base_url=base.llm_base_url,
-        llm_api_key=base.llm_api_key,
-        llm_model=base.llm_model,
-    )
+    if args.runs_dir is not None:
+        base = Settings(
+            llm_mode=base.llm_mode,
+            runs_dir=args.runs_dir,
+            mock_model=base.mock_model,
+            openai_api_key=base.openai_api_key,
+            openai_model=base.openai_model,
+            llm_provider_name=base.llm_provider_name,
+            llm_base_url=base.llm_base_url,
+            llm_api_key=base.llm_api_key,
+            llm_model=base.llm_model,
+        )
+    if args.preset:
+        base = apply_preset(base, args.preset)
+    return base
+
+
+def render_preset_list(console: Console) -> None:
+    table = Table(title="Model presets")
+    table.add_column("Preset", style="bold")
+    table.add_column("Provider")
+    table.add_column("Model")
+    table.add_column("Mode")
+    for name in list_preset_names():
+        preset = MODEL_PRESETS[name]
+        table.add_row(name, preset.provider_name, preset.model, preset.llm_mode)
+    console.print(table)
+    console.print("\nAPI keys are read from env only (OPENAI_API_KEY or LLM_API_KEY).")
 
 
 def render_result(

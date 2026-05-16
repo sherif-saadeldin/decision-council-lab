@@ -29,6 +29,21 @@ class MissingProviderCredentialError(ValueError):
         super().__init__(message)
 
 
+class UnknownModelPresetError(ValueError):
+    """Raised when --preset names an unknown model preset."""
+
+    def __init__(self, preset_name: str, available_presets: tuple[str, ...]) -> None:
+        self.preset_name = preset_name
+        self.available_presets = available_presets
+        available = ", ".join(available_presets) or "(none)"
+        message = (
+            f"Unknown model preset {preset_name!r}. "
+            f"Available presets: {available}. "
+            "Use --list-presets to see options."
+        )
+        super().__init__(message)
+
+
 class MissingProviderConfigError(ValueError):
     """Raised when a provider mode is missing required non-secret configuration."""
 

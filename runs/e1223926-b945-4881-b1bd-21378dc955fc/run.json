@@ -1,0 +1,197 @@
+{
+  "schema_version": "1.2",
+  "dossier": {
+    "run_id": "e1223926-b945-4881-b1bd-21378dc955fc",
+    "timestamp": "2026-05-16T17:07:03.501250Z",
+    "decision_question": "Should I build this?",
+    "decision_type": "proceed",
+    "disagreement_resolution": "Research and Operator favor shipping an internal engine now; Skeptic and Risk warn against overconfidence in mock output. Chair weights execution learning over polish, but requires measurable kill criteria before expanding scope.",
+    "strongest_argument_for": "Internal tooling de-risks architecture and produces reusable decision artifacts.",
+    "strongest_argument_against": "Mock-only reasoning can look rigorous while remaining generic on novel questions.",
+    "deciding_factor": "The cost of a small prototype is lower than committing to a full platform prematurely.",
+    "confidence_rationale": "Confidence is 0.72 because specialist briefs align on sequencing (internal first) but disagree on output quality until real providers are wired.",
+    "assumptions": [
+      "The team can iterate quickly without external customer commitments.",
+      "Structured dossiers will be reviewed by humans before driving major commitments.",
+      "Provider contracts remain stable as OpenAI and later vendors are added."
+    ],
+    "arguments_for": [
+      "Internal tooling de-risks architecture and produces reusable decision artifacts.",
+      "Agent roles map cleanly to executive decision workflows.",
+      "Saved JSON/Markdown runs create an audit trail for revisits."
+    ],
+    "arguments_against": [
+      "Mock-only reasoning can look rigorous while remaining generic on novel questions.",
+      "Manual CLI usage limits adoption until later slice enhancements.",
+      "Single-pass council may miss issues that debate rounds would surface."
+    ],
+    "risks": [
+      "Scope creep into SaaS, auth, or trading features before core engine is stable.",
+      "Overfitting prompts to sample questions instead of general decision quality.",
+      "False confidence if chair synthesis reads more decisive than evidence supports."
+    ],
+    "recommendation": "Proceed with a time-boxed internal prototype before external packaging.",
+    "confidence_score": 0.72,
+    "kill_criteria": [
+      "Two consecutive runs fail to produce schema-valid dossiers on representative questions.",
+      "Internal stakeholders stop referencing run artifacts within one sprint.",
+      "OpenAI mode dossiers score worse than mock baselines on a simple quality rubric."
+    ],
+    "next_actions": [
+      "Run three real product decisions through mock and OpenAI modes and compare dossiers.",
+      "Add debate rounds only after baseline dossier quality is stable.",
+      "Track disagreement_resolution usefulness with a short reviewer checklist."
+    ],
+    "open_questions": [
+      "Which decisions require multi-round debate versus a single council pass?",
+      "What retention policy should apply to runs stored on disk?",
+      "When should confidence scores block automated downstream actions?"
+    ]
+  },
+  "agent_briefs": [
+    {
+      "role": "context",
+      "headline": "Decision is an internal capability bet, not a go-to-market launch.",
+      "role_specific_finding": "The question 'Should I build this?' is primarily about build-vs-buy sequencing for an internal decision system.",
+      "evidence_basis": "Wording emphasizes internal tool-first delivery and engineering leverage.",
+      "uncertainty": "Exact stakeholder map and success metrics are not fully specified.",
+      "decision_implication": "Chair should optimize for learning speed and artifact quality, not distribution.",
+      "reasoning": "Stakeholders are likely product and engineering leaders evaluating whether to invest in an internal council workflow before external packaging.",
+      "confidence": 0.74,
+      "source_refs": []
+    },
+    {
+      "role": "research",
+      "headline": "Precedent supports CLI/internal tooling before UI and SaaS packaging.",
+      "role_specific_finding": "Comparable decision systems begin as internal workflows with saved artifacts.",
+      "evidence_basis": "Pattern from internal AI tooling: notebook/CLI prototypes precede productized surfaces.",
+      "uncertainty": "Limited evidence on how quickly mock output transfers to real LLM quality.",
+      "decision_implication": "Favor an internal engine milestone with explicit quality gates.",
+      "reasoning": "Research angle on 'Should I build this?' suggests reducing scope to structured runs that teams can review asynchronously.",
+      "confidence": 0.76,
+      "source_refs": []
+    },
+    {
+      "role": "skeptic",
+      "headline": "A polished dossier can mask weak underlying reasoning in mock mode.",
+      "role_specific_finding": "The council may appear decisive without adversarial depth.",
+      "evidence_basis": "Mock agents use templated phrasing that may not stress-test the specific question.",
+      "uncertainty": "How much skepticism is enough before delaying a useful internal prototype.",
+      "decision_implication": "Chair must include kill criteria and explicit uncertainty in the final call.",
+      "reasoning": "For 'Should I build this?', the risk is approving internal tooling because the format looks executive-ready, not because reasoning was truly tested.",
+      "confidence": 0.71,
+      "source_refs": []
+    },
+    {
+      "role": "risk",
+      "headline": "Scope drift and false confidence are the dominant failure modes.",
+      "role_specific_finding": "Adding platform features early could collapse focus on dossier quality.",
+      "evidence_basis": "Roadmap slices explicitly defer UI, auth, and multi-provider complexity.",
+      "uncertainty": "Whether kill criteria will be enforced in practice by reviewers.",
+      "decision_implication": "Proceed only with constraints that cap scope and require human review.",
+      "reasoning": "Operational risk is not building the wrong tool—it is building too much too soon while trusting low-cost mock runs as if they were audited analysis.",
+      "confidence": 0.73,
+      "source_refs": []
+    },
+    {
+      "role": "operator",
+      "headline": "Next two weeks: harden prompts, run real decisions, compare mock vs OpenAI.",
+      "role_specific_finding": "Execution path is CLI-first with saved runs under versioned schema.",
+      "evidence_basis": "Current repo supports uv workflows, structured JSON, and provider switching via env.",
+      "uncertainty": "Engineering time to tune OpenAI prompts to beat mock usefulness.",
+      "decision_implication": "Approve internal rollout to a small pilot group with weekly dossier review.",
+      "reasoning": "Operators can ship value by running the council on live decisions and iterating prompts before any UI or external user onboarding.",
+      "confidence": 0.77,
+      "source_refs": []
+    }
+  ],
+  "provider_metadata": {
+    "provider_name": "mock",
+    "model_name": "mock-council-v1",
+    "mode": "mock",
+    "supports_structured_output": true,
+    "supports_streaming": false
+  },
+  "provider_responses": [
+    {
+      "brief": {
+        "role": "context",
+        "headline": "Decision is an internal capability bet, not a go-to-market launch.",
+        "role_specific_finding": "The question 'Should I build this?' is primarily about build-vs-buy sequencing for an internal decision system.",
+        "evidence_basis": "Wording emphasizes internal tool-first delivery and engineering leverage.",
+        "uncertainty": "Exact stakeholder map and success metrics are not fully specified.",
+        "decision_implication": "Chair should optimize for learning speed and artifact quality, not distribution.",
+        "reasoning": "Stakeholders are likely product and engineering leaders evaluating whether to invest in an internal council workflow before external packaging.",
+        "confidence": 0.74,
+        "source_refs": []
+      },
+      "token_usage": null,
+      "latency_ms": 0.03,
+      "raw_response": "{\"role\": \"context\", \"headline\": \"Decision is an internal capability bet, not a go-to-market launch.\", \"role_specific_finding\": \"The question 'Should I build this?' is primarily about build-vs-buy sequencing for an internal decision system.\", \"evidence_basis\": \"Wording emphasizes internal tool-first delivery and engineering leverage.\", \"uncertainty\": \"Exact stakeholder map and success metrics are not fully specified.\", \"decision_implication\": \"Chair should optimize for learning speed and artifact quality, not distribution.\", \"reasoning\": \"Stakeholders are likely product and engineering leaders evaluating whether to invest in an internal council workflow before external packaging.\", \"confidence\": 0.74, \"source_refs\": []}"
+    },
+    {
+      "brief": {
+        "role": "research",
+        "headline": "Precedent supports CLI/internal tooling before UI and SaaS packaging.",
+        "role_specific_finding": "Comparable decision systems begin as internal workflows with saved artifacts.",
+        "evidence_basis": "Pattern from internal AI tooling: notebook/CLI prototypes precede productized surfaces.",
+        "uncertainty": "Limited evidence on how quickly mock output transfers to real LLM quality.",
+        "decision_implication": "Favor an internal engine milestone with explicit quality gates.",
+        "reasoning": "Research angle on 'Should I build this?' suggests reducing scope to structured runs that teams can review asynchronously.",
+        "confidence": 0.76,
+        "source_refs": []
+      },
+      "token_usage": null,
+      "latency_ms": 0.025,
+      "raw_response": "{\"role\": \"research\", \"headline\": \"Precedent supports CLI/internal tooling before UI and SaaS packaging.\", \"role_specific_finding\": \"Comparable decision systems begin as internal workflows with saved artifacts.\", \"evidence_basis\": \"Pattern from internal AI tooling: notebook/CLI prototypes precede productized surfaces.\", \"uncertainty\": \"Limited evidence on how quickly mock output transfers to real LLM quality.\", \"decision_implication\": \"Favor an internal engine milestone with explicit quality gates.\", \"reasoning\": \"Research angle on 'Should I build this?' suggests reducing scope to structured runs that teams can review asynchronously.\", \"confidence\": 0.76, \"source_refs\": []}"
+    },
+    {
+      "brief": {
+        "role": "skeptic",
+        "headline": "A polished dossier can mask weak underlying reasoning in mock mode.",
+        "role_specific_finding": "The council may appear decisive without adversarial depth.",
+        "evidence_basis": "Mock agents use templated phrasing that may not stress-test the specific question.",
+        "uncertainty": "How much skepticism is enough before delaying a useful internal prototype.",
+        "decision_implication": "Chair must include kill criteria and explicit uncertainty in the final call.",
+        "reasoning": "For 'Should I build this?', the risk is approving internal tooling because the format looks executive-ready, not because reasoning was truly tested.",
+        "confidence": 0.71,
+        "source_refs": []
+      },
+      "token_usage": null,
+      "latency_ms": 0.02,
+      "raw_response": "{\"role\": \"skeptic\", \"headline\": \"A polished dossier can mask weak underlying reasoning in mock mode.\", \"role_specific_finding\": \"The council may appear decisive without adversarial depth.\", \"evidence_basis\": \"Mock agents use templated phrasing that may not stress-test the specific question.\", \"uncertainty\": \"How much skepticism is enough before delaying a useful internal prototype.\", \"decision_implication\": \"Chair must include kill criteria and explicit uncertainty in the final call.\", \"reasoning\": \"For 'Should I build this?', the risk is approving internal tooling because the format looks executive-ready, not because reasoning was truly tested.\", \"confidence\": 0.71, \"source_refs\": []}"
+    },
+    {
+      "brief": {
+        "role": "risk",
+        "headline": "Scope drift and false confidence are the dominant failure modes.",
+        "role_specific_finding": "Adding platform features early could collapse focus on dossier quality.",
+        "evidence_basis": "Roadmap slices explicitly defer UI, auth, and multi-provider complexity.",
+        "uncertainty": "Whether kill criteria will be enforced in practice by reviewers.",
+        "decision_implication": "Proceed only with constraints that cap scope and require human review.",
+        "reasoning": "Operational risk is not building the wrong tool—it is building too much too soon while trusting low-cost mock runs as if they were audited analysis.",
+        "confidence": 0.73,
+        "source_refs": []
+      },
+      "token_usage": null,
+      "latency_ms": 0.02,
+      "raw_response": "{\"role\": \"risk\", \"headline\": \"Scope drift and false confidence are the dominant failure modes.\", \"role_specific_finding\": \"Adding platform features early could collapse focus on dossier quality.\", \"evidence_basis\": \"Roadmap slices explicitly defer UI, auth, and multi-provider complexity.\", \"uncertainty\": \"Whether kill criteria will be enforced in practice by reviewers.\", \"decision_implication\": \"Proceed only with constraints that cap scope and require human review.\", \"reasoning\": \"Operational risk is not building the wrong tool\\u2014it is building too much too soon while trusting low-cost mock runs as if they were audited analysis.\", \"confidence\": 0.73, \"source_refs\": []}"
+    },
+    {
+      "brief": {
+        "role": "operator",
+        "headline": "Next two weeks: harden prompts, run real decisions, compare mock vs OpenAI.",
+        "role_specific_finding": "Execution path is CLI-first with saved runs under versioned schema.",
+        "evidence_basis": "Current repo supports uv workflows, structured JSON, and provider switching via env.",
+        "uncertainty": "Engineering time to tune OpenAI prompts to beat mock usefulness.",
+        "decision_implication": "Approve internal rollout to a small pilot group with weekly dossier review.",
+        "reasoning": "Operators can ship value by running the council on live decisions and iterating prompts before any UI or external user onboarding.",
+        "confidence": 0.77,
+        "source_refs": []
+      },
+      "token_usage": null,
+      "latency_ms": 0.024,
+      "raw_response": "{\"role\": \"operator\", \"headline\": \"Next two weeks: harden prompts, run real decisions, compare mock vs OpenAI.\", \"role_specific_finding\": \"Execution path is CLI-first with saved runs under versioned schema.\", \"evidence_basis\": \"Current repo supports uv workflows, structured JSON, and provider switching via env.\", \"uncertainty\": \"Engineering time to tune OpenAI prompts to beat mock usefulness.\", \"decision_implication\": \"Approve internal rollout to a small pilot group with weekly dossier review.\", \"reasoning\": \"Operators can ship value by running the council on live decisions and iterating prompts before any UI or external user onboarding.\", \"confidence\": 0.77, \"source_refs\": []}"
+    }
+  ]
+}
