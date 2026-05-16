@@ -9,6 +9,7 @@ Slice 2.2 — Provider error hardening (done)
 Slice 2.3 — CLI graceful error handling (done)
 Slice 3 — OpenAI-compatible provider abstraction (done)
 Slice 3.1 — Model routing presets (done)
+Slice 3.2 — Ollama local model presets (done)
 Slice 4 — Anthropic/Gemini native SDK providers
 Slice 5 — Debate rounds
 Slice 6 — Memory/revisit system

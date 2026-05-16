@@ -7,6 +7,8 @@ if TYPE_CHECKING:
     from council.config import Settings
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
+OLLAMA_DUMMY_API_KEY = "ollama"
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,43 @@ MODEL_PRESETS: dict[str, ModelPreset] = {
         base_url=OPENROUTER_BASE_URL,
         model="qwen/qwen-2.5-72b-instruct",
     ),
+    # Ollama: default model tags match common `ollama pull` names — edit if your local tags differ.
+    "ollama-qwen": ModelPreset(
+        name="ollama-qwen",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="qwen2.5:7b",
+    ),
+    "ollama-phi": ModelPreset(
+        name="ollama-phi",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="phi3:mini",
+    ),
+    "ollama-gemma": ModelPreset(
+        name="ollama-gemma",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="gemma3:4b",
+    ),
+    "ollama-deepseek-coder": ModelPreset(
+        name="ollama-deepseek-coder",
+        llm_mode="openai_compatible",
+        provider_name="ollama",
+        base_url=OLLAMA_BASE_URL,
+        model="deepseek-coder:6.7b",
+    ),
 }
+
+OLLAMA_PRESET_NAMES: tuple[str, ...] = (
+    "ollama-qwen",
+    "ollama-phi",
+    "ollama-gemma",
+    "ollama-deepseek-coder",
+)
 
 
 def list_preset_names() -> tuple[str, ...]:
@@ -109,6 +147,9 @@ def apply_preset(settings: "Settings", preset_name: str) -> "Settings":
             llm_model=settings.llm_model,
         )
     if preset.llm_mode == "openai_compatible":
+        llm_api_key = settings.llm_api_key
+        if not llm_api_key and preset.provider_name == "ollama":
+            llm_api_key = OLLAMA_DUMMY_API_KEY
         return Settings(
             llm_mode="openai_compatible",
             runs_dir=settings.runs_dir,
@@ -117,7 +158,7 @@ def apply_preset(settings: "Settings", preset_name: str) -> "Settings":
             openai_model=settings.openai_model,
             llm_provider_name=preset.provider_name,
             llm_base_url=preset.base_url,
-            llm_api_key=settings.llm_api_key,
+            llm_api_key=llm_api_key,
             llm_model=preset.model,
         )
     msg = f"Unsupported preset mode: {preset.llm_mode}"

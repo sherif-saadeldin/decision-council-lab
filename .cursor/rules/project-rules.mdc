@@ -49,3 +49,7 @@ Use:
 
 ```bash
 uv run python -m compileall main.py council tests
+
+Do not invent metrics, timelines, benchmarks, or thresholds unless the user provided them.
+If you propose a metric, label it as a proposed metric.
+If evidence is missing, say evidence is missing.

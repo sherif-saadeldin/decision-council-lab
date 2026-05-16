@@ -94,11 +94,19 @@ def render_preset_list(console: Console) -> None:
     table.add_column("Provider")
     table.add_column("Model")
     table.add_column("Mode")
+    table.add_column("Base URL")
     for name in list_preset_names():
         preset = MODEL_PRESETS[name]
-        table.add_row(name, preset.provider_name, preset.model, preset.llm_mode)
+        base_url = preset.base_url or "—"
+        table.add_row(name, preset.provider_name, preset.model, preset.llm_mode, base_url)
     console.print(table)
-    console.print("\nAPI keys are read from env only (OPENAI_API_KEY or LLM_API_KEY).")
+    console.print(
+        "\nAPI keys from env: OPENAI_API_KEY (openai presets) or LLM_API_KEY (compatible). "
+        "Ollama presets accept LLM_API_KEY=ollama (or omit — defaults to ollama locally)."
+    )
+    console.print(
+        "Ollama model tags are defaults — run `ollama list` and edit presets if your tags differ."
+    )
 
 
 def render_result(

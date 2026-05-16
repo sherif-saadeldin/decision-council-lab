@@ -8,7 +8,14 @@ from unittest.mock import patch
 import pytest
 
 from council.config import Settings
-from council.model_presets import MODEL_PRESETS, apply_preset, list_preset_names
+from council.model_presets import (
+    MODEL_PRESETS,
+    OLLAMA_BASE_URL,
+    OLLAMA_DUMMY_API_KEY,
+    OLLAMA_PRESET_NAMES,
+    apply_preset,
+    list_preset_names,
+)
 from council.providers.errors import UnknownModelPresetError
 from council.providers.factory import create_provider
 from main import main
@@ -21,6 +28,7 @@ EXPECTED_PRESETS = (
     "openrouter-gemini",
     "openrouter-deepseek",
     "openrouter-qwen",
+    *OLLAMA_PRESET_NAMES,
 )
 
 
@@ -68,9 +76,14 @@ def test_list_presets_main(capsys) -> None:
     code = main(["--list-presets"])
     captured = capsys.readouterr()
     assert code == 0
-    for name in EXPECTED_PRESETS:
-        assert name in captured.out
-    assert "Provider" in captured.out or "openrouter" in captured.out
+    assert "Model presets" in captured.out
+    assert "mock" in captured.out
+    assert "ollama-qwen" in captured.out
+    assert "ollama-phi" in captured.out
+    assert "ollama-gemma" in captured.out
+    assert "ollama-deeps" in captured.out  # Rich may truncate ollama-deepseek-coder
+    assert "localhost:11434" in captured.out or "http://localh" in captured.out
+    assert len(list_preset_names()) == len(EXPECTED_PRESETS)
 
 
 def test_unknown_preset_cli_no_traceback(capsys) -> None:
@@ -114,6 +127,47 @@ def test_openai_preset_missing_openai_api_key_clean_error(capsys) -> None:
     assert code == 1
     assert "OPENAI_API_KEY" in captured.err
     assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize("preset_name", OLLAMA_PRESET_NAMES)
+def test_ollama_presets_use_openai_compatible_localhost(preset_name: str) -> None:
+    preset = MODEL_PRESETS[preset_name]
+    assert preset.llm_mode == "openai_compatible"
+    assert preset.provider_name == "ollama"
+    assert preset.base_url == OLLAMA_BASE_URL
+    assert "localhost:11434" in preset.base_url
+
+
+def test_ollama_preset_apply_defaults_dummy_api_key_when_missing() -> None:
+    base = Settings.from_env()
+    settings = apply_preset(
+        Settings(
+            llm_mode=base.llm_mode,
+            runs_dir=Path("./runs"),
+            mock_model=base.mock_model,
+            llm_api_key=None,
+        ),
+        "ollama-qwen",
+    )
+    assert settings.llm_api_key == OLLAMA_DUMMY_API_KEY
+    assert settings.llm_model == "qwen2.5:7b"
+
+
+def test_ollama_preset_provider_metadata_with_dummy_key() -> None:
+    settings = apply_preset(Settings.from_env(), "ollama-phi")
+    settings = Settings(
+        llm_mode=settings.llm_mode,
+        runs_dir=Path("./runs"),
+        mock_model=settings.mock_model,
+        llm_provider_name=settings.llm_provider_name,
+        llm_base_url=settings.llm_base_url,
+        llm_api_key=OLLAMA_DUMMY_API_KEY,
+        llm_model=settings.llm_model,
+    )
+    provider = create_provider(settings)
+    assert provider.metadata.provider_name == "ollama"
+    assert provider.metadata.mode == "openai_compatible"
+    assert provider.metadata.model_name == "phi3:mini"
 
 
 def test_openrouter_preset_provider_metadata() -> None:

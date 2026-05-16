@@ -70,6 +70,13 @@ Configuration errors:
 - Secrets never stored in presets — `OPENAI_API_KEY` / `LLM_API_KEY` from env only
 - Unknown preset → `UnknownModelPresetError` (clean CLI error, no traceback)
 
+### Ollama presets (Slice 3.2)
+
+- Reuse `openai_compatible` + `OpenAICompatibleProvider` with `base_url=http://localhost:11434/v1`
+- Presets: `ollama-qwen`, `ollama-phi`, `ollama-gemma`, `ollama-deepseek-coder`
+- `LLM_API_KEY=ollama` is sufficient (dummy); defaults to `ollama` when unset for Ollama presets
+- Model tags in presets are editable defaults — local `ollama list` names may differ
+
 ### OpenAI-compatible stack (Slice 2 + 3)
 
 - Shared implementation: `OpenAICompatibleProvider` in `council/providers/openai_compatible.py`
