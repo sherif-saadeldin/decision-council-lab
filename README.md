@@ -116,10 +116,29 @@ Default model tags in presets (`qwen2.5:7b`, `phi3:mini`, etc.) match common pul
 ```bash
 uv run python main.py --help
 uv run python main.py presets          # list model presets
+uv run python main.py config init      # create .dcouncil/config.toml (no secrets)
+uv run python main.py config list
+uv run python main.py config show mock
+uv run python main.py config use ollama-local
 uv run python main.py doctor           # check mode, env vars, Ollama reachability
+uv run python main.py doctor --profile ollama-local
 uv run python main.py doctor --preset ollama-qwen
 uv run python main.py version
+uv run python main.py run "Your question" --profile mock
 uv run python main.py run "Your question" --preset mock
+```
+
+### Config profiles (`.dcouncil/config.toml`)
+
+Non-secret profiles stored project-locally. API keys stay in env only.
+
+Precedence: defaults → `active_profile` → `--profile` → `--preset` → CLI flags → env keys.
+
+```bash
+uv run python main.py config init
+uv run python main.py config use ollama-local
+uv run python main.py run "Your question"              # uses active profile
+uv run python main.py run "Your question" --profile mock
 ```
 
 Legacy (still supported):

@@ -9,9 +9,22 @@ from rich.panel import Panel
 from rich.table import Table
 
 from council.config import Settings
+from council.config_profiles import (
+    ConfigProfile,
+    ConfigProfileError,
+    CouncilConfigFile,
+    UnknownConfigProfileError,
+    init_config_file,
+    load_config_file,
+    profile_display_rows,
+    resolve_debate_rounds_with_profile,
+    resolve_profile_name,
+    resolve_runtime_with_profile,
+    resolve_settings_with_profile,
+    set_active_profile,
+)
 from council.doctor import CheckStatus, DoctorCheck
-from council.engine import effective_debate_rounds
-from council.model_presets import MODEL_PRESETS, apply_preset, list_preset_names
+from council.model_presets import MODEL_PRESETS, list_preset_names
 from council.models import DEFAULT_DEBATE_ROUNDS, RUN_SCHEMA_VERSION, CouncilRunResult
 from council.providers.errors import (
     MissingProviderConfigError,
@@ -30,9 +43,11 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     UnknownModelPresetError,
     UnsupportedProviderModeError,
     ProviderResponseError,
+    ConfigProfileError,
+    UnknownConfigProfileError,
 )
 
-CLI_COMMANDS = frozenset({"run", "presets", "doctor", "version"})
+CLI_COMMANDS = frozenset({"run", "presets", "doctor", "version", "config"})
 PREVIEW_ITEM_COUNT = 3
 
 
@@ -74,9 +89,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Initialize provider (no completion call) to validate setup.",
     )
+    _add_profile_argument(doctor_parser)
     subparsers.add_parser("version", help="Show app and schema version.")
 
+    config_parser = subparsers.add_parser("config", help="Manage local config profiles.")
+    config_sub = config_parser.add_subparsers(dest="config_command", required=True)
+    config_sub.add_parser("init", help="Create .dcouncil/config.toml with sample profiles.")
+    config_sub.add_parser("list", help="List config profiles.")
+    config_show = config_sub.add_parser("show", help="Show profile values (no secrets).")
+    config_show.add_argument("profile", help="Profile name to display.")
+    config_use = config_sub.add_parser("use", help="Set active_profile in config.toml.")
+    config_use.add_argument("profile", help="Profile name to activate.")
+
     return parser
+
+
+def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--profile",
+        metavar="PROFILE_NAME",
+        help="Config profile from .dcouncil/config.toml (overrides active_profile).",
+    )
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -126,15 +159,16 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=0,
+        default=None,
         metavar="N",
-        help="Retry count for failed provider API calls (default: 0).",
+        help="Retry count for failed provider API calls (profile/env default if omitted).",
     )
     parser.add_argument(
         "--fast",
         action="store_true",
         help="Fast mode: skip debate, concise prompts, labeled in output.",
     )
+    _add_profile_argument(parser)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -143,48 +177,120 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if not normalized:
         parser.print_help()
         raise SystemExit(2)
-    return parser.parse_args(normalized)
+    args = parser.parse_args(normalized)
+    args._argv = normalized
+    return args
+
+
+def _load_config_context() -> CouncilConfigFile | None:
+    try:
+        return load_config_file()
+    except ConfigProfileError:
+        raise
+
+
+def _resolve_selected_profile(args: argparse.Namespace) -> ConfigProfile | None:
+    config = _load_config_context()
+    name = resolve_profile_name(cli_profile=getattr(args, "profile", None), config=config)
+    if name is None:
+        return None
+    if config is None:
+        config = load_config_file()
+    if config is None:
+        return None
+    return config.get_profile(name)
 
 
 def resolve_settings(args: argparse.Namespace) -> Settings:
     base = Settings.from_env()
-    runs_dir = getattr(args, "runs_dir", None)
+    profile = _resolve_selected_profile(args)
     preset = getattr(args, "preset", None)
+    settings = resolve_settings_with_profile(base, profile=profile, cli_preset=preset)
+    runs_dir = getattr(args, "runs_dir", None)
     if runs_dir is not None:
-        base = Settings(
-            llm_mode=base.llm_mode,
+        settings = Settings(
+            llm_mode=settings.llm_mode,
             runs_dir=runs_dir,
-            mock_model=base.mock_model,
-            openai_api_key=base.openai_api_key,
-            openai_model=base.openai_model,
-            llm_provider_name=base.llm_provider_name,
-            llm_base_url=base.llm_base_url,
-            llm_api_key=base.llm_api_key,
-            llm_model=base.llm_model,
+            mock_model=settings.mock_model,
+            openai_api_key=settings.openai_api_key,
+            openai_model=settings.openai_model,
+            llm_provider_name=settings.llm_provider_name,
+            llm_base_url=settings.llm_base_url,
+            llm_api_key=settings.llm_api_key,
+            llm_model=settings.llm_model,
         )
-    if preset:
-        base = apply_preset(base, preset)
-    return base
+    return settings
 
 
 def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
-    quiet = bool(getattr(args, "quiet", False))
-    fast_mode = bool(getattr(args, "fast", False))
-    timeout = getattr(args, "timeout_seconds", None)
-    max_retries = int(getattr(args, "max_retries", 0) or 0)
-    return RuntimeOptions(
-        timeout_seconds=timeout,
-        max_retries=max(0, max_retries),
-        fast_mode=fast_mode,
-        show_progress=not quiet,
+    profile = _resolve_selected_profile(args)
+    argv = getattr(args, "_argv", None)
+    fast_explicit = bool(argv and "--fast" in argv)
+    return resolve_runtime_with_profile(
+        profile,
+        cli_timeout=getattr(args, "timeout_seconds", None),
+        cli_max_retries=getattr(args, "max_retries", None),
+        cli_fast=bool(getattr(args, "fast", False)),
+        cli_fast_explicit=fast_explicit,
+        quiet=bool(getattr(args, "quiet", False)),
     )
 
 
 def resolve_debate_rounds(args: argparse.Namespace, runtime: RuntimeOptions) -> int:
-    requested = getattr(args, "debate_rounds", None)
-    if requested is None:
-        requested = DEFAULT_DEBATE_ROUNDS
-    return effective_debate_rounds(requested, runtime)
+    profile = _resolve_selected_profile(args)
+    return resolve_debate_rounds_with_profile(
+        profile,
+        cli_debate_rounds=getattr(args, "debate_rounds", None),
+        runtime=runtime,
+    )
+
+
+def render_config_list(console: Console) -> None:
+    config = load_config_file()
+    if config is None:
+        console.print("No config file found. Run: python main.py config init", style="yellow")
+        return
+    table = Table(title=f"Config profiles ({config.path})")
+    table.add_column("Profile", style="bold")
+    table.add_column("Active")
+    table.add_column("Mode")
+    table.add_column("Provider")
+    table.add_column("Model / preset")
+    for name in config.profile_names():
+        profile = config.profiles[name]
+        label = profile.preset or profile.model or "—"
+        table.add_row(
+            name,
+            "yes" if name == config.active_profile else "",
+            profile.mode or "—",
+            profile.provider_name or "—",
+            label,
+        )
+    console.print(table)
+
+
+def render_config_show(console: Console, profile_name: str) -> None:
+    config = load_config_file()
+    if config is None:
+        raise ConfigProfileError("No config file found. Run: python main.py config init")
+    profile = config.get_profile(profile_name)
+    table = Table(title=f"Profile: {profile_name}")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    for field, value in profile_display_rows(profile):
+        table.add_row(field, value)
+    console.print(table)
+
+
+def render_config_init(console: Console, path: Path | None = None) -> None:
+    created = init_config_file(path)
+    console.print(f"[green]Config ready:[/green] {created}")
+    console.print("API keys remain in environment variables only.")
+
+
+def render_config_use(console: Console, profile_name: str) -> None:
+    path = set_active_profile(profile_name)
+    console.print(f"[green]Active profile:[/green] {profile_name} ({path})")
 
 
 def render_preset_list(console: Console) -> None:

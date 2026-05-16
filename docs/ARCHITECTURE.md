@@ -68,6 +68,14 @@ Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debat
 
 Progress stages: context → research → skeptic → risk → operator → debate round N → chair → storage.
 
+### Config profiles (Slice 4.3)
+
+- File: `.dcouncil/config.toml` (project-local, gitignored)
+- Commands: `config init`, `config list`, `config show PROFILE`, `config use PROFILE`
+- Profiles hold mode/provider/model/runtime fields — never API keys
+- Presets remain built-in routing shortcuts; profile may reference `preset = "openai-mini"`
+- Resolution: defaults → active profile → `--profile` → `--preset` → CLI flags; secrets from env only
+
 ### Supported modes (Slice 3)
 
 | Mode | Implementation | Notes |

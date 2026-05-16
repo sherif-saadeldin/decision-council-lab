@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Callable
 
 from council.config import Settings
-from council.model_presets import OLLAMA_BASE_URL, apply_preset, list_preset_names
+from council.model_presets import OLLAMA_BASE_URL, list_preset_names
 from council.models import RUN_SCHEMA_VERSION
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
 from council.runtime import RuntimeOptions
@@ -29,11 +29,22 @@ class DoctorCheck:
     message: str
 
 
-def resolve_doctor_settings(*, preset: str | None = None) -> Settings:
+def resolve_doctor_settings(
+    *,
+    preset: str | None = None,
+    profile_name: str | None = None,
+) -> Settings:
+    from council.config_profiles import (
+        load_config_file,
+        resolve_profile_name,
+        resolve_settings_with_profile,
+    )
+
     settings = Settings.from_env()
-    if preset:
-        settings = apply_preset(settings, preset)
-    return settings
+    config = load_config_file()
+    name = resolve_profile_name(cli_profile=profile_name, config=config)
+    profile = config.get_profile(name) if name and config else None
+    return resolve_settings_with_profile(settings, profile=profile, cli_preset=preset)
 
 
 def run_doctor(

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+.dcouncil/
 runs/*
 !runs/.gitkeep
 .pytest_cache/

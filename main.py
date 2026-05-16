@@ -5,6 +5,10 @@ from rich.console import Console
 from council.cli import (
     KNOWN_PROJECT_ERRORS,
     parse_args,
+    render_config_init,
+    render_config_list,
+    render_config_show,
+    render_config_use,
     render_doctor,
     render_known_error,
     render_preset_list,
@@ -14,7 +18,7 @@ from council.cli import (
     resolve_runtime_options,
     resolve_settings,
 )
-from council.doctor import resolve_doctor_settings, run_doctor
+from council.doctor import run_doctor
 from council.engine import run_council
 from council.progress import ConsoleProgressReporter, NullProgressReporter
 from council.prompt_debug import save_prompt_debug
@@ -41,14 +45,24 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if command == "doctor":
-        settings = resolve_doctor_settings(preset=getattr(args, "preset", None))
-        checks = run_doctor(settings, live=bool(args.live))
-        return render_doctor(console, checks)
+        try:
+            settings = resolve_settings(args)
+            checks = run_doctor(settings, live=bool(args.live))
+            return render_doctor(console, checks)
+        except KNOWN_PROJECT_ERRORS as exc:
+            render_known_error(error_console, exc, quiet=False)
+            return 1
+
+    if command == "config":
+        return _config_command(args, console, error_console)
 
     if command == "run":
         return _run_command(args, console, error_console)
 
-    error_console.print("Unknown command. Use: run, presets, doctor, version.", style="red")
+    error_console.print(
+        "Unknown command. Use: run, presets, doctor, version, config.",
+        style="red",
+    )
     return 1
 
 
@@ -109,6 +123,28 @@ def _run_command(args, console: Console, error_console: Console) -> int:
         return 0
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=args.quiet)
+        return 1
+
+
+def _config_command(args, console: Console, error_console: Console) -> int:
+    sub = getattr(args, "config_command", None)
+    try:
+        if sub == "init":
+            render_config_init(console)
+            return 0
+        if sub == "list":
+            render_config_list(console)
+            return 0
+        if sub == "show":
+            render_config_show(console, args.profile)
+            return 0
+        if sub == "use":
+            render_config_use(console, args.profile)
+            return 0
+        error_console.print("Usage: config init | list | show PROFILE | use PROFILE", style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
         return 1
 
 
