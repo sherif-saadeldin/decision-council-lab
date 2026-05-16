@@ -1,0 +1,94 @@
+{
+  "schema_version": "1.1",
+  "dossier": {
+    "run_id": "cc05b62f-7f3e-4531-8e00-79a1da2c4a91",
+    "timestamp": "2026-05-16T16:09:54.276085Z",
+    "decision_question": "Should I build a decision council engine as an internal tool first?",
+    "assumptions": [
+      "The team can iterate quickly without external customer commitments.",
+      "Mock-mode council output is sufficient to shape early product direction.",
+      "Provider integration can be swapped in without rewriting agent roles."
+    ],
+    "arguments_for": [
+      "Internal tooling de-risks architecture before UI or SaaS packaging.",
+      "Structured dossiers create an audit trail for important decisions.",
+      "Agent roles map cleanly to executive decision workflows."
+    ],
+    "arguments_against": [
+      "Without real LLM calls, conclusions may feel generic until providers land.",
+      "Manual CLI usage limits adoption until later slice enhancements.",
+      "Parallel specialist debate is simplified in the first mock slice."
+    ],
+    "risks": [
+      "Scope creep into SaaS, auth, or trading features before core engine is stable.",
+      "Overfitting mock heuristics to sample questions instead of real reasoning.",
+      "Underestimating effort to add provider parity across vendors."
+    ],
+    "recommendation": "Build the decision council engine as an internal tool first.",
+    "confidence_score": 0.78,
+    "kill_criteria": [
+      "Two consecutive runs fail to produce a complete dossier on representative questions.",
+      "Structured output validation errors exceed an agreed error budget.",
+      "Internal users stop referencing saved run artifacts within one sprint."
+    ],
+    "next_actions": [
+      "Run the council on three real product decisions and review dossier quality.",
+      "Wire OpenAI provider in Slice 2 behind the existing provider interface.",
+      "Add tests that lock dossier schema and storage formats."
+    ],
+    "open_questions": [
+      "Which decisions require multi-round debate versus a single council pass?",
+      "What retention policy should apply to runs stored on disk?",
+      "When should confidence scores block automated downstream actions?"
+    ]
+  },
+  "agent_briefs": [
+    {
+      "role": "context",
+      "headline": "Frame the decision as an engineering leverage bet.",
+      "findings": [
+        "Decision under review: Should I build a decision council engine as an internal tool first?",
+        "Stakeholders likely include product, engineering, and future operators.",
+        "Success means faster, higher-quality decisions with traceable rationale."
+      ]
+    },
+    {
+      "role": "research",
+      "headline": "Favor a narrow internal engine before external packaging.",
+      "findings": [
+        "Comparable systems start as CLI or notebook workflows, then add UI.",
+        "Structured JSON + Markdown artifacts support async review.",
+        "Question emphasis: Should I build a decision council engine as an internal tool first?"
+      ]
+    },
+    {
+      "role": "skeptic",
+      "headline": "Challenge premature platform expansion.",
+      "findings": [
+        "A mock council can look complete while hiding weak reasoning quality.",
+        "Adding providers late may require revisiting prompt contracts.",
+        "Internal-only scope should stay enforced until dossier quality is proven."
+      ]
+    },
+    {
+      "role": "risk",
+      "headline": "Primary risks are scope drift and false confidence.",
+      "findings": [
+        "Shipping UI or auth early splits focus from the council core.",
+        "Low-cost mock runs may encourage decisions without human review.",
+        "Missing kill criteria can let weak recommendations persist too long."
+      ]
+    },
+    {
+      "role": "operator",
+      "headline": "Operational path: CLI now, providers next, UI last.",
+      "findings": [
+        "Persist every run under a unique run_id for reproducibility.",
+        "Keep agent roles explicit in code and saved artifacts.",
+        "Use uv-managed workflows for local execution and CI parity."
+      ]
+    }
+  ],
+  "provider_name": "mock",
+  "model_name": "mock-council-v1"
+}

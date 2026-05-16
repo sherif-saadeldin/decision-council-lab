@@ -1,0 +1,51 @@
+# Decision Council Lab — Cursor Rules
+
+## Non-negotiables
+
+- Use uv only.
+- Do not use pip.
+- Do not create requirements.txt.
+- Do not create a frontend.
+- Do not add Supabase.
+- Do not add auth.
+- Do not add n8n.
+- Do not add trading logic.
+- Do not build a SaaS yet.
+- Keep the project runnable from CLI first.
+
+## Commands
+
+Use:
+
+```bash
+uv sync
+uv run python main.py "Should I build this?"
+uv run python -m compileall .
+uv run pytest
+uv run ruff check .
+```
+
+Never use:
+
+```bash
+pip install
+python -m venv
+source .venv/bin/activate
+```
+
+## Architecture Rules
+
+- Keep agent roles explicit.
+- Keep outputs structured with Pydantic.
+- Save every run as JSON and Markdown.
+- The first version must run in mock mode without API keys.
+- Provider integration must be abstracted.
+- One slice per commit.
+## Validation Scope
+
+Do not run compileall against the entire repository because it scans `.venv`.
+
+Use:
+
+```bash
+uv run python -m compileall main.py council tests
