@@ -128,7 +128,32 @@ uv run python main.py doctor --preset ollama-qwen
 uv run python main.py version
 uv run python main.py run "Your question" --profile mock
 uv run python main.py run "Your question" --preset mock
+uv run python main.py compare "Your question" --presets mock,ollama-qwen --debate-rounds 1
 ```
+
+### Compare / benchmark
+
+Run the same question across multiple presets or config profiles. Runs are sequential; a provider failure on one target does not stop the rest. A rule-based evaluator summarizes outcomes (no extra LLM call).
+
+```bash
+uv run python main.py compare "Should I keep this CLI-first?" \
+  --presets mock,ollama-qwen --debate-rounds 1
+
+uv run python main.py compare "Question?" --profiles mock,ollama-local
+
+# benchmark is an alias for compare
+uv run python main.py benchmark "Question?" --presets mock -q
+```
+
+Artifacts:
+
+| Path | Purpose |
+|------|---------|
+| `runs/<run_id>/run.json` | Per-target council run (on success) |
+| `runs/comparisons/<comparison_id>/comparison.json` | Structured comparison report |
+| `runs/comparisons/<comparison_id>/comparison.md` | Human-readable comparison |
+
+Exit code `0` if at least one target succeeds; `1` if all targets fail or config is invalid.
 
 ### Secrets (OS keyring)
 
@@ -210,6 +235,8 @@ Each council run is saved under `runs/<run_id>/`:
 | `run.json` | Structured record (`schema_version` 1.4, agent briefs, `debate_transcript`, dossier) |
 | `run.md` | Human-readable dossier with Debate Transcript (when rounds > 0), Chair Judgment, evidence sections |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
+| `comparisons/<id>/comparison.json` | Multi-preset/profile comparison (from `compare` / `benchmark`) |
+| `comparisons/<id>/comparison.md` | Human-readable comparison report |
 
 ## Provider contract
 
@@ -299,4 +326,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers). Slice 4.4 added OS keyring secrets.
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers).

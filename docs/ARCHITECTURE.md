@@ -65,6 +65,7 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `version` | App + schema version |
 | `config` | Local profiles in `.dcouncil/config.toml` (no secrets) |
 | `secrets` | OS keyring for `OPENAI_API_KEY` / `LLM_API_KEY` |
+| `compare` / `benchmark` | Same question across multiple presets/profiles; comparison report |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
@@ -85,6 +86,16 @@ Progress stages: context → research → skeptic → risk → operator → deba
 - Resolution: environment variable → keyring → `MissingProviderCredentialError`
 - Never stored in `.dcouncil/config.toml`, presets, or run artifacts
 - `prompt_debug` redacts resolved secrets passed from settings
+
+### Run comparison (Slice 4.5)
+
+- Module: `council/compare.py` — sequential multi-target runs with per-target failure capture
+- CLI: `compare` and `benchmark` (alias); `--presets` and/or `--profiles` (comma-separated)
+- Each successful run saves normal artifacts under `runs/<run_id>/`
+- Comparison artifacts: `runs/comparisons/<comparison_id>/comparison.json` and `comparison.md`
+- Report: per-target success/failure, dossier summary fields, disagreement notes, rule-based evaluator (no extra LLM call)
+- Provider failures are recorded safely; comparison continues unless config is invalid upfront
+- Secrets redacted from failure messages; never written to comparison artifacts
 
 ### Supported modes (Slice 3)
 

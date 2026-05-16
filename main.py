@@ -4,7 +4,9 @@ from rich.console import Console
 
 from council.cli import (
     KNOWN_PROJECT_ERRORS,
+    build_compare_request,
     parse_args,
+    render_comparison_result,
     render_config_init,
     render_config_list,
     render_config_show,
@@ -22,6 +24,7 @@ from council.cli import (
     resolve_runtime_options,
     resolve_settings,
 )
+from council.compare import run_comparison
 from council.doctor import run_doctor
 from council.engine import run_council
 from council.progress import ConsoleProgressReporter, NullProgressReporter
@@ -63,14 +66,40 @@ def main(argv: list[str] | None = None) -> int:
     if command == "secrets":
         return _secrets_command(args, console, error_console)
 
+    if command in ("compare", "benchmark"):
+        return _compare_command(args, console, error_console)
+
     if command == "run":
         return _run_command(args, console, error_console)
 
     error_console.print(
-        "Unknown command. Use: run, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, compare, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
+
+
+def _compare_command(args, console: Console, error_console: Console) -> int:
+    question = args.question.strip()
+    if not question:
+        error_console.print("A decision question is required.", style="red")
+        return 1
+
+    try:
+        request = build_compare_request(args)
+        report, json_path, md_path = run_comparison(request)
+        render_comparison_result(
+            console,
+            report,
+            json_path,
+            md_path,
+            quiet=bool(args.quiet),
+        )
+        failures = sum(1 for entry in report.entries if not entry.success)
+        return 1 if failures == len(report.entries) else 0
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=bool(args.quiet))
+        return 1
 
 
 def _run_command(args, console: Console, error_console: Console) -> int:

@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
 from council.config import Settings
 from council.config_profiles import (
     ConfigProfile,
@@ -54,9 +55,12 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     ConfigProfileError,
     UnknownConfigProfileError,
     UnknownSecretNameError,
+    CompareConfigError,
 )
 
-CLI_COMMANDS = frozenset({"run", "presets", "doctor", "version", "config", "secrets"})
+CLI_COMMANDS = frozenset(
+    {"run", "presets", "doctor", "version", "config", "secrets", "compare", "benchmark"}
+)
 PREVIEW_ITEM_COUNT = 3
 
 
@@ -120,6 +124,17 @@ def build_parser() -> argparse.ArgumentParser:
     secrets_delete = secrets_sub.add_parser("delete", help="Remove a secret from the OS keyring.")
     secrets_delete.add_argument("name", help="Secret name (OPENAI_API_KEY or LLM_API_KEY).")
 
+    compare_parser = subparsers.add_parser(
+        "compare",
+        help="Run the same question across multiple presets/profiles and compare.",
+    )
+    _add_compare_arguments(compare_parser)
+    benchmark_parser = subparsers.add_parser(
+        "benchmark",
+        help="Alias for compare.",
+    )
+    _add_compare_arguments(benchmark_parser)
+
     return parser
 
 
@@ -128,6 +143,82 @@ def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
         "--profile",
         metavar="PROFILE_NAME",
         help="Config profile from .dcouncil/config.toml (overrides active_profile).",
+    )
+
+
+def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "question",
+        help="Decision question to run across each preset/profile.",
+    )
+    parser.add_argument(
+        "--presets",
+        metavar="NAMES",
+        help="Comma-separated model presets (e.g. mock,ollama-qwen).",
+    )
+    parser.add_argument(
+        "--profiles",
+        metavar="NAMES",
+        help="Comma-separated config profiles from .dcouncil/config.toml.",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Directory for run and comparison artifacts (default: RUNS_DIR env or ./runs).",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Print only comparison artifact paths.",
+    )
+    parser.add_argument(
+        "--debate-rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            f"Debate rounds for each run (default: {DEFAULT_DEBATE_ROUNDS}; "
+            "use 0 to skip; fast mode forces 0)."
+        ),
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Per-request provider timeout for live LLM calls (default: 120).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Retry count for failed provider API calls.",
+    )
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        help="Fast mode: skip debate, concise prompts.",
+    )
+
+
+def build_compare_request(args: argparse.Namespace) -> CompareRequest:
+    presets = parse_csv_targets(getattr(args, "presets", None))
+    profiles = parse_csv_targets(getattr(args, "profiles", None))
+    targets = build_targets(presets, profiles)
+    argv = getattr(args, "_argv", None)
+    fast_explicit = bool(argv and "--fast" in argv)
+    return CompareRequest(
+        question=args.question,
+        targets=targets,
+        runs_dir=getattr(args, "runs_dir", None),
+        debate_rounds=getattr(args, "debate_rounds", None),
+        timeout_seconds=getattr(args, "timeout_seconds", None),
+        max_retries=getattr(args, "max_retries", None),
+        fast=bool(getattr(args, "fast", False)),
+        fast_explicit=fast_explicit,
     )
 
 
@@ -331,6 +422,57 @@ def render_preset_list(console: Console) -> None:
     console.print(
         "Ollama model tags are defaults — run `ollama list` and edit presets if your tags differ."
     )
+
+
+def render_comparison_result(
+    console: Console,
+    report: ComparisonReport,
+    json_path: Path,
+    md_path: Path,
+    *,
+    quiet: bool,
+) -> None:
+    if quiet:
+        console.print(json_path)
+        console.print(md_path)
+        return
+
+    table = Table(title=f"Comparison {report.comparison_id}")
+    table.add_column("Target", style="bold")
+    table.add_column("Kind")
+    table.add_column("Status")
+    table.add_column("Decision")
+    table.add_column("Confidence")
+    for entry in report.entries:
+        if entry.success:
+            status = "[green]ok[/green]"
+            decision = entry.decision_type or "—"
+            confidence = f"{(entry.confidence_score or 0) * 100:.0f}%"
+        else:
+            status = "[red]failed[/red]"
+            decision = "—"
+            confidence = "—"
+        table.add_row(entry.label, entry.kind, status, decision, confidence)
+    console.print(table)
+    console.print()
+    ev = report.evaluator
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold")
+    summary.add_column()
+    summary.add_row("Question", report.question)
+    summary.add_row("Debate rounds", str(report.debate_rounds))
+    summary.add_row("Most decisive", ev.most_decisive)
+    summary.add_row("Recommended", ev.recommended)
+    console.print(summary)
+    console.print()
+    try:
+        json_display = json_path.relative_to(Path.cwd())
+        md_display = md_path.relative_to(Path.cwd())
+    except ValueError:
+        json_display = json_path
+        md_display = md_path
+    console.print(f"[green]Saved comparison JSON:[/green] {json_display}")
+    console.print(f"[green]Saved comparison Markdown:[/green] {md_display}")
 
 
 def render_secrets_set(console: Console, name: str, *, prompt_for_value: Callable[[str], str]) -> None:
