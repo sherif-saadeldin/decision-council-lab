@@ -13,6 +13,7 @@ from council.prompts import (
 )
 from council.providers.base import LLMProvider
 from council.providers.models import ProviderMetadata, ProviderRequest, ProviderResponse
+from council.providers.parsing import PROPOSED_METRIC_PREFIX
 
 
 class MockProvider(LLMProvider):
@@ -131,9 +132,8 @@ class MockProvider(LLMProvider):
             recommendation=recommendation,
             confidence_score=confidence,
             kill_criteria=[
-                "Two consecutive runs fail to produce schema-valid dossiers on representative questions.",
-                "Internal stakeholders stop referencing run artifacts within one sprint.",
-                "OpenAI mode dossiers score worse than mock baselines on a simple quality rubric.",
+                "proposed: two consecutive schema-valid dossier runs on representative questions — stop if not met",
+                "proposed: internal stakeholders reference saved runs within one review cycle — stop if not met",
             ],
             next_actions=[
                 "Run three real product decisions through mock and OpenAI modes and compare dossiers.",
@@ -144,6 +144,17 @@ class MockProvider(LLMProvider):
                 "Which decisions require multi-round debate versus a single council pass?",
                 "What retention policy should apply to runs stored on disk?",
                 "When should confidence scores block automated downstream actions?",
+            ],
+            evidence_gaps=[
+                "No baseline quality rubric scores comparing mock vs live providers.",
+                "Stakeholder adoption metrics were not provided in the question.",
+            ],
+            proposed_metrics=[
+                "proposed: two consecutive schema-valid dossier runs on representative questions",
+                "proposed: internal stakeholders reference saved runs within one review cycle",
+            ],
+            unsupported_assumptions=[
+                "Assumes the team can iterate without external customer commitments.",
             ],
         )
 
@@ -188,6 +199,10 @@ class MockProvider(LLMProvider):
                 "in an internal council workflow before external packaging."
             ),
             confidence=0.74,
+            evidence_gaps=["No explicit success metrics or stakeholder list in the question."],
+            proposed_metrics=[
+                "proposed: reviewer signs off dossier usefulness on a simple qualitative rubric",
+            ],
         )
 
     def _research_brief(self, question: str, _prior: list[AgentBrief]) -> AgentBrief:
@@ -205,6 +220,7 @@ class MockProvider(LLMProvider):
                 "that teams can review asynchronously."
             ),
             confidence=0.76,
+            evidence_gaps=["No user-provided comparison data between mock and live provider output."],
         )
 
     def _skeptic_brief(self, question: str, _prior: list[AgentBrief]) -> AgentBrief:
@@ -220,6 +236,13 @@ class MockProvider(LLMProvider):
                 "looks executive-ready, not because reasoning was truly tested."
             ),
             confidence=0.71,
+            evidence_gaps=["No adversarial review process or external benchmark for dossier quality."],
+            proposed_metrics=[
+                "proposed: two consecutive schema-valid dossier runs on representative questions",
+            ],
+            unsupported_assumptions=[
+                "Assumes templated mock phrasing generalizes to novel decisions.",
+            ],
         )
 
     def _risk_brief(self, _question: str, _prior: list[AgentBrief]) -> AgentBrief:
@@ -235,12 +258,13 @@ class MockProvider(LLMProvider):
                 "while trusting low-cost mock runs as if they were audited analysis."
             ),
             confidence=0.73,
+            unsupported_assumptions=["Assumes kill criteria will be enforced by reviewers."],
         )
 
     def _operator_brief(self, _question: str, _prior: list[AgentBrief]) -> AgentBrief:
         return _make_brief(
             role=AgentRole.OPERATOR,
-            headline="Next two weeks: harden prompts, run real decisions, compare mock vs OpenAI.",
+            headline="Next execution focus: harden prompts, run real decisions, compare mock vs OpenAI.",
             role_specific_finding="Execution path is CLI-first with saved runs under versioned schema.",
             evidence_basis="Current repo supports uv workflows, structured JSON, and provider switching via env.",
             uncertainty="Engineering time to tune OpenAI prompts to beat mock usefulness.",
@@ -264,7 +288,15 @@ def _make_brief(
     reasoning: str,
     confidence: float,
     source_refs: list[str] | None = None,
+    evidence_gaps: list[str] | None = None,
+    proposed_metrics: list[str] | None = None,
+    unsupported_assumptions: list[str] | None = None,
 ) -> AgentBrief:
+    for metric in proposed_metrics or []:
+        text = metric.strip()
+        if text and not text.lower().startswith(PROPOSED_METRIC_PREFIX):
+            msg = f"mock proposed_metrics must start with '{PROPOSED_METRIC_PREFIX}': {metric!r}"
+            raise ValueError(msg)
     return AgentBrief(
         role=role,
         headline=headline,
@@ -275,4 +307,7 @@ def _make_brief(
         reasoning=reasoning,
         confidence=confidence,
         source_refs=source_refs or [],
+        evidence_gaps=evidence_gaps or [],
+        proposed_metrics=proposed_metrics or [],
+        unsupported_assumptions=unsupported_assumptions or [],
     )

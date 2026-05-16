@@ -15,6 +15,22 @@ def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
         lines.append("_None recorded._")
 
 
+def _format_proposed_metric(item: str) -> str:
+    lowered = item.strip().lower()
+    if lowered.startswith("proposed:"):
+        detail = item.split(":", 1)[1].strip()
+        return f"**Proposed:** {detail}"
+    return f"**Proposed:** {item.strip()}"
+
+
+def _proposed_metrics_section(lines: list[str], heading: str, items: list[str]) -> None:
+    lines.extend(["", f"## {heading}", ""])
+    if items:
+        lines.extend(f"- {_format_proposed_metric(item)}" for item in items)
+    else:
+        lines.append("_None recorded._")
+
+
 def _format_agent_brief_markdown(lines: list[str], brief: AgentBrief) -> None:
     role_label = brief.role.value.replace("_", " ").title()
     lines.extend(
@@ -36,6 +52,18 @@ def _format_agent_brief_markdown(lines: list[str], brief: AgentBrief) -> None:
             "",
         ]
     )
+    if brief.evidence_gaps:
+        lines.extend(["**Evidence gaps:**", ""])
+        lines.extend(f"- {gap}" for gap in brief.evidence_gaps)
+        lines.append("")
+    if brief.proposed_metrics:
+        lines.extend(["**Proposed metrics:**", ""])
+        lines.extend(f"- {_format_proposed_metric(metric)}" for metric in brief.proposed_metrics)
+        lines.append("")
+    if brief.unsupported_assumptions:
+        lines.extend(["**Unsupported assumptions:**", ""])
+        lines.extend(f"- {item}" for item in brief.unsupported_assumptions)
+        lines.append("")
     if brief.source_refs:
         lines.append("**Sources:**")
         lines.extend(f"- {ref}" for ref in brief.source_refs)
@@ -70,19 +98,29 @@ def _format_markdown(result: CouncilRunResult) -> str:
         "",
         f"**Confidence rationale:** {dossier.confidence_rationale}",
         "",
-        "## Run Metadata",
-        "",
-        f"- **Run ID:** `{dossier.run_id}`",
-        f"- **Timestamp (UTC):** {dossier.timestamp.isoformat()}",
-        f"- **Schema version:** {result.schema_version}",
-        f"- **Provider:** {meta.provider_name}",
-        f"- **Model:** {meta.model_name}",
-        f"- **Mode:** {meta.mode}",
-        "",
-        "## Decision Question",
-        "",
-        dossier.decision_question,
     ]
+
+    _bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
+    _proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)
+    _bullet_section(lines, "Unsupported Assumptions", dossier.unsupported_assumptions)
+
+    lines.extend(
+        [
+            "",
+            "## Run Metadata",
+            "",
+            f"- **Run ID:** `{dossier.run_id}`",
+            f"- **Timestamp (UTC):** {dossier.timestamp.isoformat()}",
+            f"- **Schema version:** {result.schema_version}",
+            f"- **Provider:** {meta.provider_name}",
+            f"- **Model:** {meta.model_name}",
+            f"- **Mode:** {meta.mode}",
+            "",
+            "## Decision Question",
+            "",
+            dossier.decision_question,
+        ]
+    )
 
     _bullet_section(lines, "Assumptions", dossier.assumptions)
     _bullet_section(lines, "Arguments For", dossier.arguments_for)

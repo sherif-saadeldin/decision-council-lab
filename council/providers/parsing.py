@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from council.models import AgentBrief, AgentRole, DecisionDossier, DecisionType
 from council.providers.errors import ProviderResponseError
+
+PROPOSED_METRIC_PREFIX = "proposed:"
 
 
 class _AgentBriefPayload(BaseModel):
@@ -18,6 +20,23 @@ class _AgentBriefPayload(BaseModel):
     reasoning: str
     confidence: float = Field(ge=0.0, le=1.0)
     source_refs: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+    proposed_metrics: list[str] = Field(default_factory=list)
+    unsupported_assumptions: list[str] = Field(default_factory=list)
+
+    @field_validator("proposed_metrics")
+    @classmethod
+    def validate_proposed_metrics(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in values:
+            text = item.strip()
+            if not text:
+                continue
+            if not text.lower().startswith(PROPOSED_METRIC_PREFIX):
+                msg = f"proposed metric must start with '{PROPOSED_METRIC_PREFIX}': {item!r}"
+                raise ValueError(msg)
+            normalized.append(text)
+        return normalized
 
 
 class _DossierPayload(BaseModel):
@@ -36,6 +55,23 @@ class _DossierPayload(BaseModel):
     kill_criteria: list[str]
     next_actions: list[str]
     open_questions: list[str]
+    evidence_gaps: list[str] = Field(default_factory=list)
+    proposed_metrics: list[str] = Field(default_factory=list)
+    unsupported_assumptions: list[str] = Field(default_factory=list)
+
+    @field_validator("proposed_metrics")
+    @classmethod
+    def validate_proposed_metrics(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for item in values:
+            text = item.strip()
+            if not text:
+                continue
+            if not text.lower().startswith(PROPOSED_METRIC_PREFIX):
+                msg = f"proposed metric must start with '{PROPOSED_METRIC_PREFIX}': {item!r}"
+                raise ValueError(msg)
+            normalized.append(text)
+        return normalized
 
 
 def parse_agent_brief_payload(
@@ -60,6 +96,11 @@ def parse_agent_brief_payload(
         reasoning=parsed.reasoning.strip(),
         confidence=parsed.confidence,
         source_refs=parsed.source_refs,
+        evidence_gaps=[item.strip() for item in parsed.evidence_gaps if item.strip()],
+        proposed_metrics=parsed.proposed_metrics,
+        unsupported_assumptions=[
+            item.strip() for item in parsed.unsupported_assumptions if item.strip()
+        ],
     )
 
 
@@ -94,6 +135,11 @@ def parse_dossier_payload(
         kill_criteria=parsed.kill_criteria,
         next_actions=parsed.next_actions,
         open_questions=parsed.open_questions,
+        evidence_gaps=[item.strip() for item in parsed.evidence_gaps if item.strip()],
+        proposed_metrics=parsed.proposed_metrics,
+        unsupported_assumptions=[
+            item.strip() for item in parsed.unsupported_assumptions if item.strip()
+        ],
     )
 
 

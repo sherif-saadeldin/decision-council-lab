@@ -1,6 +1,6 @@
 # Decision Council Lab
 
-Domain-agnostic multi-agent decision council prototype. Slice 2.1 improves dossier quality (decision type, chair judgment fields, richer agent briefs) on top of mock and OpenAI providers.
+Domain-agnostic multi-agent decision council prototype. Schema 1.3 adds evidence guardrails (gaps, proposed metrics, unsupported assumptions) to reduce invented specifics from local and weaker models.
 
 ## Setup
 
@@ -130,8 +130,8 @@ Each council run is saved under `runs/<run_id>/`:
 
 | File | Purpose |
 |------|---------|
-| `run.json` | Structured record (`schema_version` 1.2, dossier with `decision_type`, chair fields, agent briefs) |
-| `run.md` | Human-readable dossier with Chair Judgment section (`raw_response` and secrets omitted) |
+| `run.json` | Structured record (`schema_version` 1.3, dossier with `decision_type`, chair fields, evidence gaps, proposed metrics) |
+| `run.md` | Human-readable dossier with Chair Judgment and Evidence Gaps sections (`raw_response` and secrets omitted) |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 
 ## Provider contract
@@ -194,6 +194,19 @@ $env:LLM_MODE = "openai"
 $env:OPENAI_API_KEY = "your-key-here"
 uv run python main.py "Test auth error"
 # Expect exit code 1 and only: OpenAI authentication failed. Check OPENAI_API_KEY.
+```
+
+## Testing
+
+Tests are isolated from your shell environment and `.env` provider settings:
+
+- Autouse fixtures clear `LLM_MODE`, API keys, and compatible-provider URLs before each test.
+- `Settings.from_env()` is pinned to mock mode during tests unless a test opts into `real_settings_from_env`.
+- Live OpenAI/Ollama/OpenRouter network calls are blocked; provider unit tests pass `client=mock_client`.
+- Use the `mock_settings` fixture (or `run_mock_council`) when calling `run_council` explicitly.
+
+```bash
+uv run pytest
 ```
 
 ## Validate

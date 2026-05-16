@@ -24,6 +24,9 @@ VALID_BRIEF_PAYLOAD = {
     "reasoning": "Test reasoning",
     "confidence": 0.82,
     "source_refs": ["note-a"],
+    "evidence_gaps": ["No success metrics provided."],
+    "proposed_metrics": ["proposed: reviewer rubric pass on two sample questions"],
+    "unsupported_assumptions": [],
 }
 
 VALID_DOSSIER_PAYLOAD = {
@@ -42,6 +45,9 @@ VALID_DOSSIER_PAYLOAD = {
     "kill_criteria": ["Kill"],
     "next_actions": ["Next"],
     "open_questions": ["Open"],
+    "evidence_gaps": ["Missing adoption data."],
+    "proposed_metrics": ["proposed: schema-valid run on a representative question"],
+    "unsupported_assumptions": ["Assumes team capacity for pilot review."],
 }
 
 

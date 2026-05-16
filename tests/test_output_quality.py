@@ -1,28 +1,25 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from council.config import Settings
 from council.engine import run_council
 from council.models import RUN_SCHEMA_VERSION, DecisionType
+from tests.conftest import assert_mock_run_schema
 from council.storage import save_run
 from main import main
 
 
-def test_chair_output_contains_decision_type() -> None:
-    result, _ = run_council("Should we build an internal tool first?")
+def test_chair_output_contains_decision_type(mock_settings: Settings) -> None:
+    result, _ = run_council("Should we build an internal tool first?", settings=mock_settings)
     assert result.dossier.decision_type in DecisionType
-    assert result.dossier.decision_type == DecisionType.PROCEED_WITH_CONSTRAINTS
+    assert_mock_run_schema(result)
 
 
-def test_markdown_includes_chair_judgment_fields() -> None:
-    result, _ = run_council("Internal council tool first?")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        settings = Settings(llm_mode="mock", runs_dir=Path(tmp), mock_model="mock-council-v1")
-        _, md_path = save_run(result, settings=settings)
-        md_text = md_path.read_text(encoding="utf-8")
+def test_markdown_includes_chair_judgment_fields(mock_settings: Settings) -> None:
+    result, _ = run_council("Internal council tool first?", settings=mock_settings)
+    _, md_path = save_run(result, settings=mock_settings)
+    md_text = md_path.read_text(encoding="utf-8")
 
     assert "## Chair Judgment" in md_text
     assert "**Strongest argument for:**" in md_text
@@ -31,10 +28,10 @@ def test_markdown_includes_chair_judgment_fields() -> None:
     assert result.dossier.strongest_argument_for in md_text
 
 
-def test_schema_version_is_1_2() -> None:
-    result, _ = run_council("Test schema version?")
+def test_schema_version_is_1_3(mock_settings: Settings) -> None:
+    result, _ = run_council("Test schema version?", settings=mock_settings)
     assert result.schema_version == RUN_SCHEMA_VERSION
-    assert RUN_SCHEMA_VERSION == "1.2"
+    assert RUN_SCHEMA_VERSION == "1.3"
 
 
 def test_prompt_debug_off_by_default(tmp_path: Path) -> None:
@@ -72,10 +69,13 @@ def test_main_save_prompt_debug_flag(tmp_path: Path) -> None:
     assert (run_dirs[0] / "run.json").exists()
 
 
-def test_agent_briefs_include_quality_fields() -> None:
-    result, _ = run_council("Quality fields check?")
+def test_agent_briefs_include_quality_fields(mock_settings: Settings) -> None:
+    result, _ = run_council("Quality fields check?", settings=mock_settings)
     brief = result.agent_briefs[0]
     assert brief.role_specific_finding
     assert brief.evidence_basis
     assert brief.uncertainty
     assert brief.decision_implication
+    assert isinstance(brief.evidence_gaps, list)
+    assert isinstance(brief.proposed_metrics, list)
+    assert isinstance(brief.unsupported_assumptions, list)

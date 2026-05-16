@@ -37,6 +37,9 @@ class AgentBrief(BaseModel):
     reasoning: str
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     source_refs: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+    proposed_metrics: list[str] = Field(default_factory=list)
+    unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
 class DecisionDossier(BaseModel):
@@ -58,9 +61,12 @@ class DecisionDossier(BaseModel):
     kill_criteria: list[str] = Field(default_factory=list)
     next_actions: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+    proposed_metrics: list[str] = Field(default_factory=list)
+    unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.2"
+RUN_SCHEMA_VERSION = "1.3"
 
 
 class CouncilRunResult(BaseModel):

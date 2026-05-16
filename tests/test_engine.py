@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,9 +21,9 @@ def test_get_provider_rejects_non_mock_mode() -> None:
         get_provider(settings)
 
 
-def test_run_council_produces_complete_dossier() -> None:
+def test_run_council_produces_complete_dossier(mock_settings: Settings) -> None:
     question = "Should I build a decision council engine as an internal tool first?"
-    result, _ = run_council(question)
+    result, _ = run_council(question, settings=mock_settings)
 
     dossier = result.dossier
     assert dossier.decision_question == question
@@ -48,24 +47,21 @@ def test_run_council_produces_complete_dossier() -> None:
     assert all(brief.role_specific_finding for brief in result.agent_briefs)
 
 
-def test_save_run_writes_json_and_markdown() -> None:
-    result, _ = run_council("Should we prototype internally first?")
+def test_save_run_writes_json_and_markdown(mock_settings: Settings) -> None:
+    result, _ = run_council("Should we prototype internally first?", settings=mock_settings)
+    json_path, md_path = save_run(result, settings=mock_settings)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        settings = Settings(llm_mode="mock", runs_dir=Path(tmp), mock_model="mock-council-v1")
-        json_path, md_path = save_run(result, settings=settings)
+    assert json_path.exists()
+    assert md_path.exists()
+    assert json_path.parent.name == result.dossier.run_id
+    json_text = json_path.read_text(encoding="utf-8")
+    md_text = md_path.read_text(encoding="utf-8")
 
-        assert json_path.exists()
-        assert md_path.exists()
-        assert json_path.parent.name == result.dossier.run_id
-        json_text = json_path.read_text(encoding="utf-8")
-        md_text = md_path.read_text(encoding="utf-8")
-
-        assert f'"schema_version": "{RUN_SCHEMA_VERSION}"' in json_text
-        assert '"decision_type"' in json_text
-        assert "# Decision Council Dossier" in md_text
-        assert "## Chair Judgment" in md_text
-        assert "## Confidence Score" in md_text
-        assert md_text.index("## Assumptions") < md_text.index("## Recommendation")
-        assert "raw_response" not in md_text
-        assert '"provider_metadata"' in json_text
+    assert f'"schema_version": "{RUN_SCHEMA_VERSION}"' in json_text
+    assert '"decision_type"' in json_text
+    assert "# Decision Council Dossier" in md_text
+    assert "## Chair Judgment" in md_text
+    assert "## Confidence Score" in md_text
+    assert md_text.index("## Assumptions") < md_text.index("## Recommendation")
+    assert "raw_response" not in md_text
+    assert '"provider_metadata"' in json_text
