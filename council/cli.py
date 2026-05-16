@@ -9,7 +9,7 @@ from rich.table import Table
 
 from council.config import Settings
 from council.model_presets import MODEL_PRESETS, apply_preset, list_preset_names
-from council.models import CouncilRunResult
+from council.models import DEFAULT_DEBATE_ROUNDS, CouncilRunResult
 from council.providers.errors import (
     MissingProviderConfigError,
     MissingProviderCredentialError,
@@ -65,6 +65,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-presets",
         action="store_true",
         help="List available model presets and exit.",
+    )
+    parser.add_argument(
+        "--debate-rounds",
+        type=int,
+        default=DEFAULT_DEBATE_ROUNDS,
+        metavar="N",
+        help=(
+            f"Structured debate rounds before chair synthesis (default: {DEFAULT_DEBATE_ROUNDS}; "
+            "use 0 to skip)."
+        ),
     )
     return parser
 

@@ -12,8 +12,9 @@ Slice 3.1 — Model routing presets (done)
 Slice 3.2 — Ollama local model presets (done)
 Slice 3.3 — Local model quality guardrails (done)
 Slice 3.4 — Test isolation + schema consistency hardening (done)
-Slice 4 — Anthropic/Gemini native SDK providers
-Slice 5 — Debate rounds
+Slice 4 — Research + debate loop (done)
+Slice 4.1 — Type hygiene + docs drift cleanup (done)
+Slice 5 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements
 Slice 8 — UI integration later

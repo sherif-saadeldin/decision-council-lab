@@ -109,8 +109,11 @@ def assert_mock_run_schema(result: CouncilRunResult) -> None:
 def run_mock_council(mock_settings: Settings) -> Callable[[str], CouncilRunResult]:
     from council.engine import run_council
 
-    def _run(question: str) -> CouncilRunResult:
-        result, _ = run_council(question, settings=mock_settings)
+    def _run(question: str, *, debate_rounds: int | None = None) -> CouncilRunResult:
+        kwargs = {"settings": mock_settings}
+        if debate_rounds is not None:
+            kwargs["debate_rounds"] = debate_rounds
+        result, _ = run_council(question, **kwargs)
         return result
 
     return _run

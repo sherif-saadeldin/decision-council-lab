@@ -5,7 +5,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from council.models import AgentBrief, AgentRole, DecisionDossier, DecisionType
+from council.models import (
+    AgentBrief,
+    AgentRole,
+    DebatePosition,
+    DebateRole,
+    DebateRound,
+    DecisionDossier,
+    DecisionType,
+    ModeratorSummary,
+)
 from council.providers.errors import ProviderResponseError
 
 PROPOSED_METRIC_PREFIX = "proposed:"
@@ -101,6 +110,65 @@ def parse_agent_brief_payload(
         unsupported_assumptions=[
             item.strip() for item in parsed.unsupported_assumptions if item.strip()
         ],
+    )
+
+
+class _DebatePositionPayload(BaseModel):
+    argument: str
+    cited_roles: list[str] = Field(default_factory=list)
+    responds_to_prior: str
+    uncertainty: str
+
+
+class _ModeratorPayload(BaseModel):
+    resolved_points: list[str] = Field(default_factory=list)
+    unresolved_points: list[str] = Field(default_factory=list)
+    deciding_tensions: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+
+
+class _DebateRoundPayload(BaseModel):
+    advocate: _DebatePositionPayload
+    skeptic: _DebatePositionPayload
+    moderator: _ModeratorPayload
+
+
+def _position_from_payload(role: DebateRole, payload: _DebatePositionPayload) -> DebatePosition:
+    return DebatePosition(
+        role=role,
+        argument=payload.argument.strip(),
+        cited_roles=[item.strip() for item in payload.cited_roles if item.strip()],
+        responds_to_prior=payload.responds_to_prior.strip(),
+        uncertainty=payload.uncertainty.strip(),
+    )
+
+
+def parse_debate_round_payload(
+    raw_text: str,
+    *,
+    round_number: int,
+    provider_name: str,
+) -> DebateRound:
+    payload = _load_json_object(raw_text, provider_name)
+    try:
+        parsed = _DebateRoundPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise ProviderResponseError(provider_name, f"debate round validation failed: {exc}") from exc
+
+    return DebateRound(
+        round_number=round_number,
+        advocate=_position_from_payload(DebateRole.ADVOCATE, parsed.advocate),
+        skeptic=_position_from_payload(DebateRole.SKEPTIC, parsed.skeptic),
+        moderator=ModeratorSummary(
+            resolved_points=[item.strip() for item in parsed.moderator.resolved_points if item.strip()],
+            unresolved_points=[
+                item.strip() for item in parsed.moderator.unresolved_points if item.strip()
+            ],
+            deciding_tensions=[
+                item.strip() for item in parsed.moderator.deciding_tensions if item.strip()
+            ],
+            evidence_gaps=[item.strip() for item in parsed.moderator.evidence_gaps if item.strip()],
+        ),
     )
 
 

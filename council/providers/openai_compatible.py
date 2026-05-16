@@ -5,7 +5,12 @@ from typing import Any
 
 from openai import OpenAI
 
-from council.models import AgentBrief, DecisionDossier
+from council.debate_prompts import (
+    DEBATE_ROUND_JSON_SCHEMA,
+    debate_round_instructions,
+    format_debate_round_user_prompt,
+)
+from council.models import AgentBrief, DebateRound, DebateTranscript, DecisionDossier
 from council.prompt_debug import PromptDebugCollector
 from council.prompts import (
     AGENT_BRIEF_JSON_SCHEMA,
@@ -19,7 +24,11 @@ from council.providers.base import LLMProvider
 from council.providers.errors import ProviderResponseError
 from council.providers.openai_errors import raise_compatible_provider_error
 from council.providers.models import ProviderMetadata, ProviderRequest, ProviderResponse
-from council.providers.parsing import parse_agent_brief_payload, parse_dossier_payload
+from council.providers.parsing import (
+    parse_agent_brief_payload,
+    parse_debate_round_payload,
+    parse_dossier_payload,
+)
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -38,10 +47,12 @@ class OpenAICompatibleProvider(LLMProvider):
     ) -> None:
         self._api_key = api_key
         self._credential_env = credential_env
-        client_kwargs: dict[str, str] = {"api_key": api_key}
-        if base_url:
-            client_kwargs["base_url"] = base_url
-        self._client = client or OpenAI(**client_kwargs)
+        if client is not None:
+            self._client = client
+        elif base_url is not None:
+            self._client = OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            self._client = OpenAI(api_key=api_key)
         self._metadata = ProviderMetadata(
             provider_name=provider_name,
             model_name=model_name,
@@ -84,6 +95,45 @@ class OpenAICompatibleProvider(LLMProvider):
             raw_response=raw_text,
         )
 
+    def run_debate_round(
+        self,
+        *,
+        question: str,
+        briefs: list[AgentBrief],
+        prior_rounds: list[DebateRound],
+        round_number: int,
+        total_rounds: int,
+        run_id: str,
+        debug_collector: PromptDebugCollector | None = None,
+    ) -> DebateRound:
+        _ = run_id
+        instructions = debate_round_instructions()
+        user_content = format_debate_round_user_prompt(
+            question=question,
+            briefs=briefs,
+            prior_rounds=prior_rounds,
+            round_number=round_number,
+            total_rounds=total_rounds,
+        )
+        self._record_debug(
+            debug_collector,
+            step=f"debate_round_{round_number}",
+            role="debate",
+            instructions=instructions,
+            user_content=user_content,
+        )
+        raw_text = self._call_structured_json(
+            instructions=instructions,
+            user_content=user_content,
+            schema_name="debate_round",
+            schema=DEBATE_ROUND_JSON_SCHEMA,
+        )
+        return parse_debate_round_payload(
+            raw_text,
+            round_number=round_number,
+            provider_name=self._metadata.provider_name,
+        )
+
     def synthesize_dossier(
         self,
         question: str,
@@ -91,9 +141,10 @@ class OpenAICompatibleProvider(LLMProvider):
         run_id: str,
         *,
         debug_collector: PromptDebugCollector | None = None,
+        debate_transcript: DebateTranscript | None = None,
     ) -> DecisionDossier:
         instructions = chair_instructions()
-        user_content = format_dossier_user_prompt(question, briefs)
+        user_content = format_dossier_user_prompt(question, briefs, debate_transcript)
         self._record_debug(
             debug_collector,
             step="chair_synthesis",

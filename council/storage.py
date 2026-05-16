@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from council.config import Settings
-from council.models import AgentBrief, CouncilRunResult
+from council.models import AgentBrief, CouncilRunResult, DebateRound
 
 
 def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
@@ -29,6 +29,62 @@ def _proposed_metrics_section(lines: list[str], heading: str, items: list[str]) 
         lines.extend(f"- {_format_proposed_metric(item)}" for item in items)
     else:
         lines.append("_None recorded._")
+
+
+def _format_debate_round_markdown(lines: list[str], debate_round: DebateRound) -> None:
+    lines.extend(
+        [
+            f"### Round {debate_round.round_number}",
+            "",
+            "**Advocate**",
+            "",
+            debate_round.advocate.argument,
+            "",
+            f"- **Cites briefs:** {', '.join(debate_round.advocate.cited_roles) or '(none)'}",
+            f"- **Responds to:** {debate_round.advocate.responds_to_prior}",
+            f"- **Uncertainty:** {debate_round.advocate.uncertainty}",
+            "",
+            "**Skeptic**",
+            "",
+            debate_round.skeptic.argument,
+            "",
+            f"- **Cites briefs:** {', '.join(debate_round.skeptic.cited_roles) or '(none)'}",
+            f"- **Responds to:** {debate_round.skeptic.responds_to_prior}",
+            f"- **Uncertainty:** {debate_round.skeptic.uncertainty}",
+            "",
+            "**Moderator**",
+            "",
+        ]
+    )
+    if debate_round.moderator.resolved_points:
+        lines.append("*Resolved this round:*")
+        lines.extend(f"- {item}" for item in debate_round.moderator.resolved_points)
+        lines.append("")
+    if debate_round.moderator.unresolved_points:
+        lines.append("*Unresolved this round:*")
+        lines.extend(f"- {item}" for item in debate_round.moderator.unresolved_points)
+        lines.append("")
+    if debate_round.moderator.deciding_tensions:
+        lines.append("*Deciding tensions:*")
+        lines.extend(f"- {item}" for item in debate_round.moderator.deciding_tensions)
+        lines.append("")
+    if debate_round.moderator.evidence_gaps:
+        lines.append("*Evidence gaps:*")
+        lines.extend(f"- {item}" for item in debate_round.moderator.evidence_gaps)
+        lines.append("")
+
+
+def _format_debate_transcript_markdown(lines: list[str], result: CouncilRunResult) -> None:
+    transcript = result.debate_transcript
+    if transcript is None or not transcript.rounds:
+        return
+    lines.extend(["", "## Debate Transcript", ""])
+    for debate_round in transcript.rounds:
+        _format_debate_round_markdown(lines, debate_round)
+    if transcript.final_unresolved_disagreements:
+        lines.extend(["**Unresolved disagreements (final):**", ""])
+        lines.extend(f"- {item}" for item in transcript.final_unresolved_disagreements)
+        lines.append("")
 
 
 def _format_agent_brief_markdown(lines: list[str], brief: AgentBrief) -> None:
@@ -85,20 +141,27 @@ def _format_markdown(result: CouncilRunResult) -> str:
         "",
         f"**Decision type:** {decision_type_label}",
         f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
-        "",
-        "## Chair Judgment",
-        "",
-        f"**Strongest argument for:** {dossier.strongest_argument_for}",
-        "",
-        f"**Strongest argument against:** {dossier.strongest_argument_against}",
-        "",
-        f"**Deciding factor:** {dossier.deciding_factor}",
-        "",
-        f"**Disagreement resolution:** {dossier.disagreement_resolution}",
-        "",
-        f"**Confidence rationale:** {dossier.confidence_rationale}",
-        "",
     ]
+
+    _format_debate_transcript_markdown(lines, result)
+
+    lines.extend(
+        [
+            "",
+            "## Chair Judgment",
+            "",
+            f"**Strongest argument for:** {dossier.strongest_argument_for}",
+            "",
+            f"**Strongest argument against:** {dossier.strongest_argument_against}",
+            "",
+            f"**Deciding factor:** {dossier.deciding_factor}",
+            "",
+            f"**Disagreement resolution:** {dossier.disagreement_resolution}",
+            "",
+            f"**Confidence rationale:** {dossier.confidence_rationale}",
+            "",
+        ]
+    )
 
     _bullet_section(lines, "Evidence Gaps", dossier.evidence_gaps)
     _proposed_metrics_section(lines, "Proposed Metrics", dossier.proposed_metrics)

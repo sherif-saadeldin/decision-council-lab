@@ -33,9 +33,11 @@ def main(argv: list[str] | None = None) -> int:
         settings = resolve_settings(args)
         question = args.question.strip()
 
+        debate_rounds = max(0, args.debate_rounds)
         result, debug_collector = run_council(
             question,
             settings=settings,
+            debate_rounds=debate_rounds,
             save_prompt_debug=args.save_prompt_debug,
         )
         json_path, md_path = save_run(result, settings=settings)

@@ -6,7 +6,15 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from council.config import Settings
-from council.models import AgentBrief, AgentRole, CouncilRunResult, DecisionDossier
+from council.debate import run_debate
+from council.models import (
+    DEFAULT_DEBATE_ROUNDS,
+    AgentBrief,
+    AgentRole,
+    CouncilRunResult,
+    DebateTranscript,
+    DecisionDossier,
+)
 from council.prompt_debug import PromptDebugCollector
 from council.providers.base import LLMProvider
 from council.providers.factory import create_provider
@@ -26,7 +34,6 @@ class CouncilState(TypedDict):
     run_id: str
     briefs: list[AgentBrief]
     provider_responses: list[ProviderResponse]
-    dossier: DecisionDossier | None
     debug_collector: PromptDebugCollector | None
 
 
@@ -54,29 +61,7 @@ def _make_agent_node(role: AgentRole, provider: LLMProvider):
     return node
 
 
-def _make_chair_node(provider: LLMProvider):
-    synthesize = getattr(provider, "synthesize_dossier", None)
-    if not callable(synthesize):
-        msg = "Provider must implement synthesize_dossier for chair synthesis."
-        raise TypeError(msg)
-
-    def node(state: CouncilState) -> dict[str, DecisionDossier]:
-        dossier = synthesize(
-            question=state["question"],
-            briefs=state["briefs"],
-            run_id=state["run_id"],
-            debug_collector=state["debug_collector"],
-        )
-        return {"dossier": dossier}
-
-    return node
-
-
-def build_council_graph(provider: LLMProvider) -> StateGraph:
-    if not callable(getattr(provider, "synthesize_dossier", None)):
-        msg = "Provider must implement synthesize_dossier for chair synthesis."
-        raise TypeError(msg)
-
+def build_agent_graph(provider: LLMProvider) -> StateGraph:
     graph = StateGraph(CouncilState)
     previous = START
 
@@ -86,9 +71,7 @@ def build_council_graph(provider: LLMProvider) -> StateGraph:
         graph.add_edge(previous, node_name)
         previous = node_name
 
-    graph.add_node(AgentRole.CHAIR.value, _make_chair_node(provider))
-    graph.add_edge(previous, AgentRole.CHAIR.value)
-    graph.add_edge(AgentRole.CHAIR.value, END)
+    graph.add_edge(previous, END)
     return graph
 
 
@@ -96,6 +79,7 @@ def run_council(
     question: str,
     settings: Settings | None = None,
     *,
+    debate_rounds: int = DEFAULT_DEBATE_ROUNDS,
     save_prompt_debug: bool = False,
 ) -> tuple[CouncilRunResult, PromptDebugCollector | None]:
     settings = settings or Settings.from_env()
@@ -103,7 +87,7 @@ def run_council(
     run_id = str(uuid4())
     debug_collector = PromptDebugCollector() if save_prompt_debug else None
 
-    graph = build_council_graph(provider)
+    graph = build_agent_graph(provider)
     app = graph.compile()
 
     final_state = app.invoke(
@@ -112,19 +96,39 @@ def run_council(
             "run_id": run_id,
             "briefs": [],
             "provider_responses": [],
-            "dossier": None,
             "debug_collector": debug_collector,
         }
     )
 
-    dossier = final_state["dossier"]
-    if dossier is None:
-        msg = "Council run completed without a decision dossier."
-        raise RuntimeError(msg)
+    briefs = final_state["briefs"]
+    debate_transcript: DebateTranscript | None = None
+    if debate_rounds > 0:
+        debate_transcript = run_debate(
+            provider,
+            question=question.strip(),
+            briefs=briefs,
+            rounds=debate_rounds,
+            run_id=run_id,
+            debug_collector=debug_collector,
+        )
+
+    synthesize = getattr(provider, "synthesize_dossier", None)
+    if not callable(synthesize):
+        msg = "Provider must implement synthesize_dossier for chair synthesis."
+        raise TypeError(msg)
+
+    dossier: DecisionDossier = synthesize(
+        question=question.strip(),
+        briefs=briefs,
+        run_id=run_id,
+        debug_collector=debug_collector,
+        debate_transcript=debate_transcript,
+    )
 
     result = CouncilRunResult(
         dossier=dossier,
-        agent_briefs=final_state["briefs"],
+        agent_briefs=briefs,
+        debate_transcript=debate_transcript,
         provider_metadata=provider.metadata,
         provider_responses=final_state["provider_responses"],
     )

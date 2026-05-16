@@ -20,6 +20,12 @@ class AgentRole(str, Enum):
     CHAIR = "chair"
 
 
+class DebateRole(str, Enum):
+    ADVOCATE = "advocate"
+    SKEPTIC = "skeptic"
+    MODERATOR = "moderator"
+
+
 class DecisionType(str, Enum):
     PROCEED = "proceed"
     PROCEED_WITH_CONSTRAINTS = "proceed_with_constraints"
@@ -40,6 +46,34 @@ class AgentBrief(BaseModel):
     evidence_gaps: list[str] = Field(default_factory=list)
     proposed_metrics: list[str] = Field(default_factory=list)
     unsupported_assumptions: list[str] = Field(default_factory=list)
+
+
+class DebatePosition(BaseModel):
+    role: DebateRole
+    argument: str
+    cited_roles: list[str] = Field(default_factory=list)
+    responds_to_prior: str = ""
+    uncertainty: str = ""
+
+
+class ModeratorSummary(BaseModel):
+    resolved_points: list[str] = Field(default_factory=list)
+    unresolved_points: list[str] = Field(default_factory=list)
+    deciding_tensions: list[str] = Field(default_factory=list)
+    evidence_gaps: list[str] = Field(default_factory=list)
+
+
+class DebateRound(BaseModel):
+    round_number: int = Field(ge=1)
+    advocate: DebatePosition
+    skeptic: DebatePosition
+    moderator: ModeratorSummary
+
+
+class DebateTranscript(BaseModel):
+    rounds: list[DebateRound] = Field(default_factory=list)
+    rounds_completed: int = Field(ge=0, default=0)
+    final_unresolved_disagreements: list[str] = Field(default_factory=list)
 
 
 class DecisionDossier(BaseModel):
@@ -66,13 +100,15 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.3"
+RUN_SCHEMA_VERSION = "1.4"
+DEFAULT_DEBATE_ROUNDS = 2
 
 
 class CouncilRunResult(BaseModel):
     schema_version: str = RUN_SCHEMA_VERSION
     dossier: DecisionDossier
     agent_briefs: list[AgentBrief] = Field(default_factory=list)
+    debate_transcript: DebateTranscript | None = None
     provider_metadata: ProviderMetadata
     provider_responses: list[ProviderResponse] = Field(default_factory=list)
 

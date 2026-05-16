@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from council.models import AgentBrief, AgentRole
+from council.models import AgentBrief, AgentRole, DebateTranscript
 from council.providers.models import ProviderRequest
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
@@ -150,6 +150,8 @@ CHAIR_INSTRUCTIONS = (
     "or your proposed_metrics list—never invent thresholds.\n"
     "9. Consolidate cross-agent evidence_gaps and unsupported_assumptions in dossier fields.\n"
     "10. recommendation must align with decision_type and deciding_factor.\n"
+    "11. When a debate transcript is provided, you must weigh advocate vs skeptic exchanges "
+    "and the moderator's unresolved points in disagreement_resolution and deciding_factor.\n"
     "Return JSON only matching the schema."
 )
 
@@ -182,7 +184,11 @@ def format_agent_user_prompt(request: ProviderRequest) -> str:
     )
 
 
-def format_dossier_user_prompt(question: str, briefs: list[AgentBrief]) -> str:
+def format_dossier_user_prompt(
+    question: str,
+    briefs: list[AgentBrief],
+    debate_transcript: DebateTranscript | None = None,
+) -> str:
     lines = [f"Decision question:\n{question}\n", "Council briefs:"]
     for brief in briefs:
         lines.extend(
@@ -201,6 +207,10 @@ def format_dossier_user_prompt(question: str, briefs: list[AgentBrief]) -> str:
                 f"Sources: {', '.join(brief.source_refs) if brief.source_refs else '(none)'}",
             ]
         )
+    if debate_transcript and debate_transcript.rounds:
+        from council.debate_prompts import format_debate_transcript_for_chair
+
+        lines.extend(["", format_debate_transcript_for_chair(debate_transcript)])
     lines.append(
         "\nSynthesize the final decision dossier. Resolve conflicts explicitly. "
         "Do not invent metrics or timelines. Penalize unsupported specificity."

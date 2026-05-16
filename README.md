@@ -1,6 +1,6 @@
 # Decision Council Lab
 
-Domain-agnostic multi-agent decision council prototype. Schema 1.3 adds evidence guardrails (gaps, proposed metrics, unsupported assumptions) to reduce invented specifics from local and weaker models.
+Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Moderator), then the chair produces a decision dossier. Schema 1.4 adds `debate_transcript` to run artifacts.
 
 ## Setup
 
@@ -120,9 +120,31 @@ uv run python main.py "Your question" --preset mock
 uv run python main.py "Your question" --runs-dir ./runs
 uv run python main.py "Your question" --quiet
 uv run python main.py "Your question" --save-prompt-debug
+uv run python main.py "Your question" --debate-rounds 2
+uv run python main.py "Your question" --debate-rounds 0
 ```
 
+- `--debate-rounds N` — structured debate rounds before chair synthesis (default `2`; use `0` to skip)
 - `--save-prompt-debug` — writes `runs/<run_id>/prompt_debug.md` (prompts only; secrets redacted)
+
+### Mock with debate (no API key)
+
+```bash
+uv run python main.py "Should we build an internal council tool first?" --preset mock --debate-rounds 2
+```
+
+### Ollama with debate (local)
+
+```bash
+# Requires Ollama running with model pulled, e.g. ollama pull qwen2.5:7b
+uv run python main.py "Your decision question" --preset ollama-qwen --debate-rounds 2
+```
+
+### Debate disabled
+
+```bash
+uv run python main.py "Your decision question" --preset mock --debate-rounds 0
+```
 
 ## Run artifacts
 
@@ -130,8 +152,8 @@ Each council run is saved under `runs/<run_id>/`:
 
 | File | Purpose |
 |------|---------|
-| `run.json` | Structured record (`schema_version` 1.3, dossier with `decision_type`, chair fields, evidence gaps, proposed metrics) |
-| `run.md` | Human-readable dossier with Chair Judgment and Evidence Gaps sections (`raw_response` and secrets omitted) |
+| `run.json` | Structured record (`schema_version` 1.4, agent briefs, `debate_transcript`, dossier) |
+| `run.md` | Human-readable dossier with Debate Transcript (when rounds > 0), Chair Judgment, evidence sections |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 
 ## Provider contract
@@ -215,8 +237,11 @@ uv run pytest
 uv run python -m compileall main.py council tests
 uv run pytest
 uv run ruff check .
+uv run mypy council main.py
 ```
+
+Type-check `council` and `main.py` only. `uv run mypy .` is not supported because pytest package discovery conflicts with the `tests/` tree; use the scoped command above.
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 4 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers).

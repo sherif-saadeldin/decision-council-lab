@@ -14,7 +14,9 @@ Skeptic Agent
 Risk Agent
 Operator Agent
     ↓
-Chair/Judge Agent (provider.synthesize_dossier)
+Debate Loop (optional, default 2 rounds: Advocate / Skeptic / Moderator per round)
+    ↓
+Chair/Judge Agent (provider.synthesize_dossier + debate transcript)
     ↓
 Decision Dossier + Agent Briefs
     ↓
@@ -30,6 +32,7 @@ All LLM backends implement `LLMProvider`:
 | `metadata` | `provider_name`, `model_name`, `mode`, capability flags |
 | `complete(ProviderRequest)` | Role-aware call returning `ProviderResponse` |
 | `synthesize_dossier(...)` | Chair synthesis into `DecisionDossier` |
+| `run_debate_round(...)` | One structured debate round (advocate, skeptic, moderator) |
 | `generate_brief(...)` | Convenience wrapper over `complete()` |
 
 ### Request / response models
@@ -38,13 +41,17 @@ All LLM backends implement `LLMProvider`:
 - **ProviderResponse** — `brief`, optional `token_usage`, `latency_ms`, `raw_response`
 - **raw_response** is persisted in `run.json` only; Markdown dossiers omit it.
 
-### Agent brief fields (schema 1.2)
+### Agent brief fields (schema 1.4)
 
-Each brief includes: `role`, `headline`, `role_specific_finding`, `evidence_basis`, `uncertainty`, `decision_implication`, `reasoning`, `confidence`, `source_refs`.
+Each brief includes: `role`, `headline`, `role_specific_finding`, `evidence_basis`, `uncertainty`, `decision_implication`, `reasoning`, `confidence`, `source_refs`, `evidence_gaps`, `proposed_metrics`, `unsupported_assumptions`.
 
-Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argument_for`, `strongest_argument_against`, `deciding_factor`, `confidence_rationale`.
+Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argument_for`, `strongest_argument_against`, `deciding_factor`, `confidence_rationale`, plus consolidated guardrail fields.
 
-Shared prompts: `council/prompts.py` (used by mock and OpenAI).
+`CouncilRunResult` also includes optional `debate_transcript` (`DebateRound` list with advocate, skeptic, moderator per round).
+
+Shared prompts: `council/prompts.py` (agents + chair), `council/debate_prompts.py` (debate rounds).
+
+Debate orchestration: `council/debate.py`. CLI: `--debate-rounds N` (default 2; `0` skips).
 
 ### Supported modes (Slice 3)
 
@@ -88,7 +95,8 @@ Configuration errors:
 
 ## Run artifacts
 
-- `schema_version` **1.2** on `CouncilRunResult`
+- `schema_version` **1.4** on `CouncilRunResult`
+- `debate_transcript` when `--debate-rounds` > 0
 - optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON
-- Markdown reflects dossier spec section order and agent brief summaries
+- Markdown: Debate Transcript (if present), Chair Judgment, evidence sections, agent briefs

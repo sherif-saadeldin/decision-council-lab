@@ -3,7 +3,21 @@ from __future__ import annotations
 import json
 import time
 
-from council.models import AgentBrief, AgentRole, DecisionDossier, DecisionType
+from council.debate_prompts import (
+    debate_round_instructions,
+    format_debate_round_user_prompt,
+)
+from council.models import (
+    AgentBrief,
+    AgentRole,
+    DebatePosition,
+    DebateRole,
+    DebateRound,
+    DebateTranscript,
+    DecisionDossier,
+    DecisionType,
+    ModeratorSummary,
+)
 from council.prompt_debug import PromptDebugCollector
 from council.prompts import (
     agent_instructions,
@@ -50,6 +64,39 @@ class MockProvider(LLMProvider):
             raw_response=json.dumps(brief.model_dump(mode="json")),
         )
 
+    def run_debate_round(
+        self,
+        *,
+        question: str,
+        briefs: list[AgentBrief],
+        prior_rounds: list[DebateRound],
+        round_number: int,
+        total_rounds: int,
+        run_id: str,
+        debug_collector: PromptDebugCollector | None = None,
+    ) -> DebateRound:
+        instructions = debate_round_instructions()
+        user_content = format_debate_round_user_prompt(
+            question=question,
+            briefs=briefs,
+            prior_rounds=prior_rounds,
+            round_number=round_number,
+            total_rounds=total_rounds,
+        )
+        if debug_collector is not None:
+            debug_collector.record(
+                step=f"debate_round_{round_number}",
+                role="debate",
+                instructions=instructions,
+                user_content=user_content,
+            )
+        return self._build_debate_round(
+            question=question,
+            briefs=briefs,
+            prior_rounds=prior_rounds,
+            round_number=round_number,
+        )
+
     def synthesize_dossier(
         self,
         question: str,
@@ -57,9 +104,10 @@ class MockProvider(LLMProvider):
         run_id: str,
         *,
         debug_collector: PromptDebugCollector | None = None,
+        debate_transcript: DebateTranscript | None = None,
     ) -> DecisionDossier:
         instructions = chair_instructions()
-        user_content = format_dossier_user_prompt(question, briefs)
+        user_content = format_dossier_user_prompt(question, briefs, debate_transcript)
         if debug_collector is not None:
             debug_collector.record(
                 step="chair_synthesis",
@@ -93,15 +141,29 @@ class MockProvider(LLMProvider):
             else "The cost of a small prototype is lower than committing to a full platform prematurely."
         )
 
+        disagreement_resolution = (
+            "Research and Operator favor shipping an internal engine now; Skeptic and Risk warn "
+            "against overconfidence in mock output. Chair weights execution learning over polish, "
+            "but requires measurable kill criteria before expanding scope."
+        )
+        if debate_transcript and debate_transcript.rounds:
+            last = debate_transcript.rounds[-1]
+            tensions = ", ".join(last.moderator.deciding_tensions) or "execution vs quality"
+            disagreement_resolution = (
+                f"After {debate_transcript.rounds_completed} debate rounds, the chair weighs council "
+                f"briefs and debate exchanges. Moderator deciding tensions: {tensions}. "
+                f"Unresolved: {', '.join(debate_transcript.final_unresolved_disagreements) or '(none)'}."
+            )
+            if last.moderator.deciding_tensions:
+                deciding_factor = (
+                    f"Debate moderator identified deciding tension: {last.moderator.deciding_tensions[0]}"
+                )
+
         return DecisionDossier(
             run_id=run_id,
             decision_question=question,
             decision_type=decision_type,
-            disagreement_resolution=(
-                "Research and Operator favor shipping an internal engine now; Skeptic and Risk warn "
-                "against overconfidence in mock output. Chair weights execution learning over polish, "
-                "but requires measurable kill criteria before expanding scope."
-            ),
+            disagreement_resolution=disagreement_resolution,
             strongest_argument_for=strongest_for,
             strongest_argument_against=strongest_against,
             deciding_factor=deciding_factor,
@@ -180,6 +242,94 @@ class MockProvider(LLMProvider):
     def _mentions_internal_tool(self, question: str) -> bool:
         lowered = question.lower()
         return "internal" in lowered or "tool first" in lowered
+
+    def _build_debate_round(
+        self,
+        *,
+        question: str,
+        briefs: list[AgentBrief],
+        prior_rounds: list[DebateRound],
+        round_number: int,
+    ) -> DebateRound:
+        if round_number == 1:
+            advocate = DebatePosition(
+                role=DebateRole.ADVOCATE,
+                argument=(
+                    "Proceeding is justified because research and context briefs support an internal "
+                    "CLI-first engine with saved artifacts before broader packaging."
+                ),
+                cited_roles=["research", "context"],
+                responds_to_prior="Opening round — no prior debate positions.",
+                uncertainty="Whether mock output quality will transfer when live models are wired.",
+            )
+            skeptic = DebatePosition(
+                role=DebateRole.SKEPTIC,
+                argument=(
+                    "Pausing full commitment is justified because the skeptic and risk briefs warn that "
+                    "polished dossiers can mask weak reasoning without adversarial review."
+                ),
+                cited_roles=["skeptic", "risk"],
+                responds_to_prior=advocate.argument,
+                uncertainty="Whether proposed kill criteria will be enforced by human reviewers.",
+            )
+            moderator = ModeratorSummary(
+                resolved_points=[
+                    "Both sides agree the decision concerns internal tooling sequencing, not GTM launch."
+                ],
+                unresolved_points=[
+                    "Whether to proceed now or wait for live-provider quality proof.",
+                    "How to validate dossier usefulness without invented metrics.",
+                ],
+                deciding_tensions=[
+                    "Execution learning speed vs evidence quality before scaling scope.",
+                ],
+                evidence_gaps=[
+                    "No user-provided success metrics or comparison between mock and live outputs.",
+                ],
+            )
+        else:
+            prior = prior_rounds[-1]
+            advocate = DebatePosition(
+                role=DebateRole.ADVOCATE,
+                argument=(
+                    "The skeptic's quality concern does not block a constrained internal pilot because "
+                    "operator and research briefs emphasize CLI artifacts and iterative prompt tuning."
+                ),
+                cited_roles=["operator", "research"],
+                responds_to_prior=prior.skeptic.argument,
+                uncertainty="Engineering capacity to run representative decisions through live providers.",
+            )
+            skeptic = DebatePosition(
+                role=DebateRole.SKEPTIC,
+                argument=(
+                    "The advocate's pilot path still risks false confidence unless the skeptic brief's "
+                    "proposed schema-valid runs and human review gates are treated as hard constraints."
+                ),
+                cited_roles=["skeptic", "risk"],
+                responds_to_prior=advocate.argument,
+                uncertainty="Whether one review cycle is enough to detect systematic reasoning gaps.",
+            )
+            moderator = ModeratorSummary(
+                resolved_points=[
+                    "Both sides accept a constrained internal scope with human review of artifacts."
+                ],
+                unresolved_points=[
+                    "Timing of expanding beyond mock mode to live provider comparisons.",
+                ],
+                deciding_tensions=[
+                    "Pilot now with constraints vs delay until live-provider rubric exists.",
+                ],
+                evidence_gaps=[
+                    "No baseline rubric scores comparing mock vs live dossiers on this question.",
+                ],
+            )
+
+        return DebateRound(
+            round_number=round_number,
+            advocate=advocate,
+            skeptic=skeptic,
+            moderator=moderator,
+        )
 
     def _context_brief(self, question: str, _prior: list[AgentBrief]) -> AgentBrief:
         return _make_brief(
