@@ -13,7 +13,11 @@ from council.storage import save_run
 
 
 def test_get_provider_rejects_non_mock_mode() -> None:
-    settings = Settings(llm_mode="openai", runs_dir=Path("./runs"), mock_model="mock-council-v1")
+    settings = Settings(
+        llm_mode="anthropic",
+        runs_dir=Path("./runs"),
+        mock_model="mock-council-v1",
+    )
     with pytest.raises(UnsupportedProviderModeError, match="Unsupported LLM_MODE"):
         get_provider(settings)
 

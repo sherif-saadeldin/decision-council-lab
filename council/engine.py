@@ -9,7 +9,6 @@ from council.config import Settings
 from council.models import AgentBrief, AgentRole, CouncilRunResult, DecisionDossier
 from council.providers.base import LLMProvider
 from council.providers.factory import create_provider
-from council.providers.mock import MockProvider
 from council.providers.models import ProviderRequest, ProviderResponse
 
 AGENT_PIPELINE: tuple[AgentRole, ...] = (
@@ -52,9 +51,14 @@ def _make_agent_node(role: AgentRole, provider: LLMProvider):
     return node
 
 
-def _make_chair_node(provider: MockProvider):
+def _make_chair_node(provider: LLMProvider):
+    synthesize = getattr(provider, "synthesize_dossier", None)
+    if not callable(synthesize):
+        msg = "Provider must implement synthesize_dossier for chair synthesis."
+        raise TypeError(msg)
+
     def node(state: CouncilState) -> dict[str, DecisionDossier]:
-        dossier = provider.synthesize_dossier(
+        dossier = synthesize(
             question=state["question"],
             briefs=state["briefs"],
             run_id=state["run_id"],
@@ -65,8 +69,8 @@ def _make_chair_node(provider: MockProvider):
 
 
 def build_council_graph(provider: LLMProvider) -> StateGraph:
-    if not isinstance(provider, MockProvider):
-        msg = "Slice 1.x council graph requires MockProvider for chair synthesis."
+    if not callable(getattr(provider, "synthesize_dossier", None)):
+        msg = "Provider must implement synthesize_dossier for chair synthesis."
         raise TypeError(msg)
 
     graph = StateGraph(CouncilState)

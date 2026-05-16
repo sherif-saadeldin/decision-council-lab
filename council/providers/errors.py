@@ -10,7 +10,30 @@ class UnsupportedProviderModeError(ValueError):
         supported = ", ".join(supported_modes) or "(none)"
         message = (
             f"Unsupported LLM_MODE={mode!r}. "
-            f"Supported modes: {supported}. "
-            "Real providers arrive in later slices; use mock for now."
+            f"Supported modes: {supported}."
         )
+        super().__init__(message)
+
+
+class MissingProviderCredentialError(ValueError):
+    """Raised when a provider mode is selected without required credentials."""
+
+    def __init__(self, provider_name: str, env_var: str) -> None:
+        self.provider_name = provider_name
+        self.env_var = env_var
+        message = (
+            f"Missing required environment variable {env_var} "
+            f"for provider {provider_name!r}. "
+            "Set the variable in your environment or .env file."
+        )
+        super().__init__(message)
+
+
+class ProviderResponseError(RuntimeError):
+    """Raised when provider output cannot be parsed into the expected structure."""
+
+    def __init__(self, provider_name: str, detail: str) -> None:
+        self.provider_name = provider_name
+        self.detail = detail
+        message = f"{provider_name} provider returned malformed output: {detail}"
         super().__init__(message)

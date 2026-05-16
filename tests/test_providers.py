@@ -47,15 +47,19 @@ def test_provider_response_shape() -> None:
 
 
 def test_unsupported_provider_mode_error() -> None:
-    settings = Settings(llm_mode="openai", runs_dir=Path("./runs"), mock_model="mock-council-v1")
+    settings = Settings(
+        llm_mode="anthropic",
+        runs_dir=Path("./runs"),
+        mock_model="mock-council-v1",
+    )
 
     with pytest.raises(UnsupportedProviderModeError) as exc_info:
         create_provider(settings)
 
     err = exc_info.value
-    assert err.mode == "openai"
+    assert err.mode == "anthropic"
     assert err.supported_modes == SUPPORTED_LLM_MODES
-    assert "openai" in str(err).lower()
+    assert "anthropic" in str(err).lower()
 
     with pytest.raises(UnsupportedProviderModeError):
         get_provider(settings)
