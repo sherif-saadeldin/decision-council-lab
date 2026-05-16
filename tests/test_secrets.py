@@ -131,7 +131,8 @@ def test_doctor_reports_keyring_source_safely(
     settings = Settings.from_env()
     checks = run_doctor(settings, live=False)
     llm_check = next(c for c in checks if c.name == "LLM_API_KEY")
-    assert llm_check.message == "source: keyring"
+    assert llm_check.message.startswith("source: keyring")
+    assert "openrouter.ai/keys" in llm_check.message
     assert SECRET_VALUE not in llm_check.message
 
 

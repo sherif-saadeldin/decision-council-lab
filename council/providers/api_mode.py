@@ -26,13 +26,18 @@ def normalize_api_mode(value: str | None) -> ApiModePreference:
     return normalized  # type: ignore[return-value]
 
 
+CHAT_PREFERRED_PROVIDERS: frozenset[str] = frozenset(
+    {"ollama", "nvidia", "groq", "cerebras"},
+)
+
+
 def resolve_effective_api_mode(
     preference: ApiModePreference,
     *,
     provider_name: str,
 ) -> ApiModePreference:
-    """Ollama implements chat completions reliably; auto should not probe Responses first."""
-    if preference == "auto" and provider_name == "ollama":
+    """Gateways that implement chat completions reliably; auto should not probe Responses first."""
+    if preference == "auto" and provider_name in CHAT_PREFERRED_PROVIDERS:
         return "chat"
     return preference
 

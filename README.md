@@ -8,6 +8,25 @@ Domain-agnostic multi-agent decision council prototype. Specialists research the
 uv sync --extra dev
 ```
 
+### First setup (recommended)
+
+Run the interactive wizard to create `.dcouncil/config.toml`, set an active profile, optionally store API keys in the OS keyring, and run doctor/smoke checks:
+
+```bash
+uv run python main.py setup
+```
+
+Non-interactive shortcuts (no prompts):
+
+```bash
+uv run python main.py setup --non-interactive --profile mock
+uv run python main.py setup --non-interactive --profile ollama-local
+uv run python main.py setup --non-interactive --profile openai-mini
+uv run python main.py setup --non-interactive --profile openrouter-sonnet
+```
+
+Secrets are never written to `config.toml` — use `uv run python main.py secrets set LLM_API_KEY` or `OPENAI_API_KEY` when prompted.
+
 Copy `.env.example` to `.env` and configure as needed:
 
 | Variable | Purpose |
@@ -97,8 +116,52 @@ uv run python main.py "Your question" --preset openrouter-sonnet  # needs LLM_AP
 | `ollama-mistral` | openai_compatible | ollama | mistral:7b |
 | `ollama-llama3` | openai_compatible | ollama | llama3:8b |
 | `ollama-deepseek-coder` | openai_compatible | ollama | deepseek-coder:6.7b-instruct |
+| `nvidia-nemotron` | openai_compatible | nvidia | nvidia/nvidia-nemotron-nano-9b-v2 |
+| `nvidia-deepseek` | openai_compatible | nvidia | deepseek-ai/deepseek-r1-distill-qwen-7b |
+| `nvidia-qwen` | openai_compatible | nvidia | qwen/qwen-2.5-7b-instruct |
+| `groq-llama` | openai_compatible | groq | llama-3.3-70b-versatile |
+| `groq-mixtral` | openai_compatible | groq | mixtral-8x7b-32768 |
+| `cerebras-qwen` | openai_compatible | cerebras | qwen-3-235b-a22b-instruct-2507 |
+| `openrouter-free-qwen` | openai_compatible | openrouter | qwen/qwen3-235b-a22b:free |
+| `openrouter-free-deepseek` | openai_compatible | openrouter | deepseek/deepseek-r1-distill-qwen-14b:free |
 
 `--preset` overrides `LLM_MODE` / model-related env defaults. `OPENAI_API_KEY` or `LLM_API_KEY` remains required for live providers (except Ollama — see below).
+
+Model IDs for hosted presets live in `council/model_presets.py` and may change — verify against each provider’s model catalog before running.
+
+### Free/cheap hosted providers (Slice 5)
+
+All use the existing `openai_compatible` path (no native SDKs). Store one shared key as `LLM_API_KEY` (env or keyring):
+
+```bash
+uv run python main.py secrets set LLM_API_KEY
+uv run python main.py secrets list
+```
+
+| Provider | Preset examples | Base URL | Get a key |
+|----------|-----------------|----------|-----------|
+| NVIDIA NIM | `nvidia-nemotron`, `nvidia-deepseek`, `nvidia-qwen` | `https://integrate.api.nvidia.com/v1` | [build.nvidia.com](https://build.nvidia.com/) |
+| Groq | `groq-llama`, `groq-mixtral` | `https://api.groq.com/openai/v1` | [console.groq.com](https://console.groq.com/) |
+| Cerebras | `cerebras-qwen` | `https://api.cerebras.ai/v1` | [cloud.cerebras.ai](https://cloud.cerebras.ai/) |
+| OpenRouter (free tier) | `openrouter-free-qwen`, `openrouter-free-deepseek` | `https://openrouter.ai/api/v1` | [openrouter.ai/keys](https://openrouter.ai/keys) |
+
+NVIDIA, Groq, and Cerebras use **chat completions** by default (`auto` resolves to `chat`). OpenRouter paid presets may still try Responses API under `auto`.
+
+```bash
+# PowerShell — example: Groq
+$env:LLM_API_KEY = "your-groq-key"
+uv run python main.py doctor --preset groq-llama
+uv run python main.py run "Your question?" --preset groq-llama --api-mode chat --debate-rounds 0
+
+# NVIDIA NIM
+uv run python main.py doctor --preset nvidia-qwen
+uv run python main.py smoke --preset nvidia-nemotron --timeout-seconds 90
+
+# OpenRouter free models
+uv run python main.py run "Your question?" --preset openrouter-free-qwen --debate-rounds 0
+```
+
+`doctor` checks credential **source** only (env/keyring/missing) and never prints key values. Use `doctor --live` only when you want provider initialization validation.
 
 ### Ollama local presets (Slice 3.2)
 
@@ -136,7 +199,7 @@ Ollama and some gateways implement `/v1/chat/completions` more reliably than the
 
 | Mode | Behavior |
 |------|----------|
-| `auto` (default) | Try Responses API first; fall back once to chat completions on compatible failures. For Ollama, `auto` resolves to `chat` immediately (no Responses probe). |
+| `auto` (default) | Try Responses API first; fall back once to chat completions on compatible failures. For Ollama, NVIDIA, Groq, and Cerebras, `auto` resolves to `chat` immediately (no Responses probe). |
 | `responses` | Responses API only (OpenAI direct, OpenRouter when supported) |
 | `chat` | Chat completions only (`/v1/chat/completions`) |
 

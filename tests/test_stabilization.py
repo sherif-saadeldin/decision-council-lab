@@ -24,6 +24,8 @@ from tests.test_openai_provider import VALID_BRIEF_PAYLOAD
 
 def test_resolve_effective_api_mode_ollama_auto_uses_chat() -> None:
     assert resolve_effective_api_mode("auto", provider_name="ollama") == "chat"
+    assert resolve_effective_api_mode("auto", provider_name="nvidia") == "chat"
+    assert resolve_effective_api_mode("auto", provider_name="groq") == "chat"
     assert resolve_effective_api_mode("auto", provider_name="openrouter") == "auto"
 
 

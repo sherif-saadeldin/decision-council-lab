@@ -72,6 +72,7 @@ CLI_COMMANDS = frozenset(
         "compare",
         "benchmark",
         "smoke",
+        "setup",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -154,6 +155,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Manual live-provider smoke test (not used by pytest).",
     )
     _add_smoke_arguments(smoke_parser)
+
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Interactive wizard for local config, secrets, doctor, and smoke.",
+    )
+    setup_parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Apply a built-in profile without prompts.",
+    )
+    setup_parser.add_argument(
+        "--profile",
+        metavar="PROFILE_NAME",
+        help=(
+            "Profile to apply with --non-interactive "
+            "(mock, ollama-local, openai-mini, openrouter-sonnet)."
+        ),
+    )
 
     return parser
 

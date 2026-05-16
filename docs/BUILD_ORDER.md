@@ -22,7 +22,9 @@ Slice 4.6 — Live-provider smoke harness (done)
 Slice 4.7 — Local model JSON repair and debug capture (done)
 Slice 4.8 — Chat Completions compatibility fallback (done)
 Slice 4.9 — Stabilization: timeouts, Ollama doctor/tags, smoke preflight, hang fixes; Ollama dummy LLM_API_KEY (done)
-Slice 5 — Anthropic/Gemini native SDK providers
+Slice 5 — Free/cheap hosted provider presets (NVIDIA NIM, Groq, Cerebras, OpenRouter free) (done)
+Slice 5.1 — Interactive setup wizard (`setup` command) (done)
+Slice 5.2 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements
 Slice 8 — UI integration later

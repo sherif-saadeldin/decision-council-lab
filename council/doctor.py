@@ -16,7 +16,7 @@ from council.ollama_probe import (
     model_is_installed,
     ollama_tags_url,
 )
-from council.providers.api_mode import resolve_effective_api_mode
+from council.providers.api_mode import CHAT_PREFERRED_PROVIDERS, resolve_effective_api_mode
 from council.secrets import credential_source
 from council.models import RUN_SCHEMA_VERSION
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
@@ -152,9 +152,7 @@ def _credential_checks(settings: Settings) -> list[DoctorCheck]:
             )
         )
     else:
-        checks.append(
-            _credential_source_check("LLM_API_KEY", required_for="openai_compatible mode"),
-        )
+        checks.append(_hosted_llm_api_key_check(settings))
     base_ok = bool(settings.llm_base_url)
     checks.append(
         DoctorCheck(
@@ -243,11 +241,17 @@ def _api_mode_check(settings: Settings, runtime: RuntimeOptions | None) -> Docto
             message="Not applicable for mock mode.",
         )
     preference = runtime.api_mode if runtime is not None else "auto"
-    if settings.llm_mode == "openai_compatible" and settings.llm_provider_name == "ollama":
-        effective = resolve_effective_api_mode(preference, provider_name="ollama")
+    if (
+        settings.llm_mode == "openai_compatible"
+        and settings.llm_provider_name in CHAT_PREFERRED_PROVIDERS
+    ):
+        effective = resolve_effective_api_mode(
+            preference,
+            provider_name=settings.llm_provider_name,
+        )
         detail = (
             f"preference={preference!r}, effective={effective!r} "
-            "(Ollama uses chat completions; auto resolves to chat)"
+            f"({settings.llm_provider_name!r} uses chat completions; auto resolves to chat)"
         )
     else:
         detail = f"preference={preference!r} (auto tries Responses API, may fall back to chat)"
@@ -278,6 +282,33 @@ def _live_provider_check(
             f"api_mode preference={meta.api_mode_preference!r}, used={used!r}."
         ),
     )
+
+
+def _hosted_llm_api_key_check(settings: Settings) -> DoctorCheck:
+    provider = settings.llm_provider_name
+    hint = _provider_key_hint(provider)
+    source = credential_source("LLM_API_KEY")
+    if source == "missing":
+        return DoctorCheck(
+            name="LLM_API_KEY",
+            status=CheckStatus.FAIL,
+            message=f"source: missing ({hint})",
+        )
+    return DoctorCheck(
+        name="LLM_API_KEY",
+        status=CheckStatus.OK,
+        message=f"source: {source} ({hint})",
+    )
+
+
+def _provider_key_hint(provider_name: str) -> str:
+    hints = {
+        "nvidia": "set LLM_API_KEY from build.nvidia.com",
+        "groq": "set LLM_API_KEY from console.groq.com",
+        "cerebras": "set LLM_API_KEY from cloud.cerebras.ai",
+        "openrouter": "set LLM_API_KEY from openrouter.ai/keys",
+    }
+    return hints.get(provider_name, "required for openai_compatible mode")
 
 
 def _credential_source_check(name: str, *, required_for: str) -> DoctorCheck:

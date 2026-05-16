@@ -66,8 +66,23 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `config` | Local profiles in `.dcouncil/config.toml` (no secrets) |
 | `secrets` | OS keyring for `OPENAI_API_KEY` / `LLM_API_KEY` |
 | `compare` / `benchmark` | Same question across multiple presets/profiles; comparison report |
+| `setup` | Interactive first-run wizard; optional `--non-interactive --profile NAME` |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
+
+### Setup wizard (Slice 5.1)
+
+`python main.py setup` guides provider → preset → profile → optional keyring secret → `.dcouncil/config.toml` → optional doctor/smoke.
+
+| Layer | Role |
+|-------|------|
+| **Presets** | Built-in routing (`council/model_presets.py`); wizard lists relevant presets per provider |
+| **Profiles** | Named entries in `.dcouncil/config.toml` (`mode`, `provider_name`, `model`, or `preset = "..."`) |
+| **Secrets** | `OPENAI_API_KEY` / `LLM_API_KEY` via env or OS keyring only — never in config |
+| **Doctor** | Validates credential source and config; optional after setup |
+| **Smoke** | End-to-end check with `debate_rounds=0`, `timeout_seconds=60`; default for mock/Ollama when doctor passes |
+
+Resolution at run time is unchanged: active profile → optional `--preset` → CLI flags; env beats keyring for secrets.
 
 Progress stages: context → research → skeptic → risk → operator → debate round N → chair → storage.
 

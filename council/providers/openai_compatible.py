@@ -25,6 +25,7 @@ from council.prompts import (
     format_dossier_user_prompt,
 )
 from council.providers.api_mode import (
+    CHAT_PREFERRED_PROVIDERS,
     DEFAULT_API_MODE,
     ApiModePreference,
     ApiModeUsed,
@@ -300,7 +301,7 @@ class OpenAICompatibleProvider(LLMProvider):
             return "responses"
         if self._api_mode_locked is not None:
             return self._api_mode_locked
-        if self._metadata.provider_name == "ollama":
+        if self._metadata.provider_name in CHAT_PREFERRED_PROVIDERS:
             return "chat"
         return "responses"
 

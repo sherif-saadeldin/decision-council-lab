@@ -9,6 +9,7 @@ import pytest
 
 from council.config import Settings
 from council.model_presets import (
+    FREE_HOSTED_PRESET_NAMES,
     MODEL_PRESETS,
     OLLAMA_BASE_URL,
     OLLAMA_DUMMY_API_KEY,
@@ -28,6 +29,7 @@ EXPECTED_PRESETS = (
     "openrouter-gemini",
     "openrouter-deepseek",
     "openrouter-qwen",
+    *FREE_HOSTED_PRESET_NAMES,
     *OLLAMA_PRESET_NAMES,
 )
 

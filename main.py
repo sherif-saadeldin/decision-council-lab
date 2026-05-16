@@ -27,6 +27,7 @@ from council.cli import (
     resolve_settings,
 )
 from council.compare import run_comparison
+from council.setup import run_setup
 from council.smoke import run_smoke
 from council.doctor import run_doctor
 from council.engine import run_council
@@ -79,8 +80,11 @@ def main(argv: list[str] | None = None) -> int:
     if command == "run":
         return _run_command(args, console, error_console)
 
+    if command == "setup":
+        return _setup_command(args, console, error_console)
+
     error_console.print(
-        "Unknown command. Use: run, compare, smoke, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, compare, smoke, setup, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
@@ -178,6 +182,31 @@ def _run_command(args, console: Console, error_console: Console) -> int:
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=args.quiet)
         return 1
+
+
+def _setup_command(args, console: Console, error_console: Console) -> int:
+    from getpass import getpass
+
+    from council.secrets import set_keyring_secret
+
+    from council.config_profiles import config_path as setup_config_path
+
+    result = run_setup(
+        interactive=not bool(args.non_interactive),
+        profile_name=getattr(args, "profile", None),
+        config_path_override=setup_config_path(),
+        console=console,
+        store_secret_fn=set_keyring_secret,
+        secret_prompt_fn=getpass,
+        doctor_fn=run_doctor,
+        smoke_fn=run_smoke,
+    )
+    if result.message:
+        if result.exit_code == 0:
+            console.print(result.message)
+        else:
+            error_console.print(result.message, style="red")
+    return result.exit_code
 
 
 def _secrets_command(args, console: Console, error_console: Console) -> int:

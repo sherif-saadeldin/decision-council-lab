@@ -8,10 +8,30 @@ if TYPE_CHECKING:
 
 from council.credentials import OLLAMA_DUMMY_API_KEY, resolve_llm_api_key  # noqa: F401
 
-__all__ = ("OLLAMA_DUMMY_API_KEY", "OLLAMA_BASE_URL", "MODEL_PRESETS", "OLLAMA_PRESET_NAMES")
+__all__ = (
+    "OLLAMA_DUMMY_API_KEY",
+    "OLLAMA_BASE_URL",
+    "MODEL_PRESETS",
+    "OLLAMA_PRESET_NAMES",
+    "FREE_HOSTED_PRESET_NAMES",
+)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OLLAMA_BASE_URL = "http://localhost:11434/v1"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1"
+
+# Model IDs are centralized here for easy edits. Verify against each provider's model
+# catalog/console — hosted providers change model availability without notice.
+NVIDIA_MODEL_NEMOTRON = "nvidia/nvidia-nemotron-nano-9b-v2"
+NVIDIA_MODEL_DEEPSEEK = "deepseek-ai/deepseek-r1-distill-qwen-7b"
+NVIDIA_MODEL_QWEN = "qwen/qwen-2.5-7b-instruct"
+GROQ_MODEL_LLAMA = "llama-3.3-70b-versatile"
+GROQ_MODEL_MIXTRAL = "mixtral-8x7b-32768"
+CEREBRAS_MODEL_QWEN = "qwen-3-235b-a22b-instruct-2507"
+OPENROUTER_FREE_MODEL_QWEN = "qwen/qwen3-235b-a22b:free"
+OPENROUTER_FREE_MODEL_DEEPSEEK = "deepseek/deepseek-r1-distill-qwen-14b:free"
 
 
 @dataclass(frozen=True)
@@ -68,6 +88,63 @@ MODEL_PRESETS: dict[str, ModelPreset] = {
         base_url=OPENROUTER_BASE_URL,
         model="qwen/qwen-2.5-72b-instruct",
     ),
+    # Free/cheap hosted presets (Slice 5) — verify model IDs in provider consoles.
+    "nvidia-nemotron": ModelPreset(
+        name="nvidia-nemotron",
+        llm_mode="openai_compatible",
+        provider_name="nvidia",
+        base_url=NVIDIA_BASE_URL,
+        model=NVIDIA_MODEL_NEMOTRON,
+    ),
+    "nvidia-deepseek": ModelPreset(
+        name="nvidia-deepseek",
+        llm_mode="openai_compatible",
+        provider_name="nvidia",
+        base_url=NVIDIA_BASE_URL,
+        model=NVIDIA_MODEL_DEEPSEEK,
+    ),
+    "nvidia-qwen": ModelPreset(
+        name="nvidia-qwen",
+        llm_mode="openai_compatible",
+        provider_name="nvidia",
+        base_url=NVIDIA_BASE_URL,
+        model=NVIDIA_MODEL_QWEN,
+    ),
+    "groq-llama": ModelPreset(
+        name="groq-llama",
+        llm_mode="openai_compatible",
+        provider_name="groq",
+        base_url=GROQ_BASE_URL,
+        model=GROQ_MODEL_LLAMA,
+    ),
+    "groq-mixtral": ModelPreset(
+        name="groq-mixtral",
+        llm_mode="openai_compatible",
+        provider_name="groq",
+        base_url=GROQ_BASE_URL,
+        model=GROQ_MODEL_MIXTRAL,
+    ),
+    "cerebras-qwen": ModelPreset(
+        name="cerebras-qwen",
+        llm_mode="openai_compatible",
+        provider_name="cerebras",
+        base_url=CEREBRAS_BASE_URL,
+        model=CEREBRAS_MODEL_QWEN,
+    ),
+    "openrouter-free-qwen": ModelPreset(
+        name="openrouter-free-qwen",
+        llm_mode="openai_compatible",
+        provider_name="openrouter",
+        base_url=OPENROUTER_BASE_URL,
+        model=OPENROUTER_FREE_MODEL_QWEN,
+    ),
+    "openrouter-free-deepseek": ModelPreset(
+        name="openrouter-free-deepseek",
+        llm_mode="openai_compatible",
+        provider_name="openrouter",
+        base_url=OPENROUTER_BASE_URL,
+        model=OPENROUTER_FREE_MODEL_DEEPSEEK,
+    ),
     # Ollama: model tags must exactly match `ollama list` — edit presets if your tags differ.
     "ollama-qwen": ModelPreset(
         name="ollama-qwen",
@@ -119,6 +196,17 @@ MODEL_PRESETS: dict[str, ModelPreset] = {
         model="deepseek-coder:6.7b-instruct",
     ),
 }
+
+FREE_HOSTED_PRESET_NAMES: tuple[str, ...] = (
+    "nvidia-nemotron",
+    "nvidia-deepseek",
+    "nvidia-qwen",
+    "groq-llama",
+    "groq-mixtral",
+    "cerebras-qwen",
+    "openrouter-free-qwen",
+    "openrouter-free-deepseek",
+)
 
 OLLAMA_PRESET_NAMES: tuple[str, ...] = (
     "ollama-qwen",

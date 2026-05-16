@@ -131,6 +131,58 @@ def load_config_file(path: Path | None = None) -> CouncilConfigFile | None:
     return CouncilConfigFile(path=target, active_profile=active, profiles=profiles)
 
 
+def render_config_file_toml(active_profile: str, profiles: dict[str, ConfigProfile]) -> str:
+    """Serialize profiles to TOML (no secrets)."""
+    if active_profile not in profiles:
+        raise UnknownConfigProfileError(active_profile, tuple(sorted(profiles.keys())))
+    lines = [
+        "# Decision Council local config (no secrets — API keys via env or keyring only)",
+        f'active_profile = "{active_profile}"',
+        "",
+    ]
+    for name in sorted(profiles.keys()):
+        profile = profiles[name]
+        lines.extend(_profile_to_toml_lines(name, profile))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def save_config_file(
+    active_profile: str,
+    profiles: dict[str, ConfigProfile],
+    path: Path | None = None,
+) -> Path:
+    target = config_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = render_config_file_toml(active_profile, profiles)
+    target.write_text(content, encoding="utf-8")
+    _validate_no_secrets_in_file(target)
+    return target
+
+
+def upsert_profile(
+    profile: ConfigProfile,
+    *,
+    set_active: bool = True,
+    path: Path | None = None,
+) -> Path:
+    """Merge a profile into config.toml without removing other profiles."""
+    target = config_path(path)
+    profiles: dict[str, ConfigProfile]
+    active = profile.name
+    if target.exists():
+        loaded = load_config_file(target)
+        if loaded is None:
+            raise ConfigProfileError(f"Could not load config: {target}")
+        profiles = dict(loaded.profiles)
+        active = profile.name if set_active else loaded.active_profile
+    else:
+        profiles = {}
+        active = profile.name
+    profiles[profile.name] = profile
+    return save_config_file(active, profiles, target)
+
+
 def set_active_profile(profile_name: str, path: Path | None = None) -> Path:
     target = config_path(path)
     if not target.exists():
@@ -310,6 +362,29 @@ def _profile_from_dict(name: str, data: dict[str, Any]) -> ConfigProfile:
         fast=_optional_bool(data.get("fast")),
         debate_rounds=_optional_int(data.get("debate_rounds")),
     )
+
+
+def _profile_to_toml_lines(name: str, profile: ConfigProfile) -> list[str]:
+    lines = [f"[profiles.{name}]"]
+    if profile.preset is not None:
+        lines.append(f'preset = "{profile.preset}"')
+    if profile.mode is not None:
+        lines.append(f'mode = "{profile.mode}"')
+    if profile.provider_name is not None:
+        lines.append(f'provider_name = "{profile.provider_name}"')
+    if profile.base_url is not None:
+        lines.append(f'base_url = "{profile.base_url}"')
+    if profile.model is not None:
+        lines.append(f'model = "{profile.model}"')
+    if profile.timeout_seconds is not None:
+        lines.append(f"timeout_seconds = {profile.timeout_seconds:g}")
+    if profile.max_retries is not None:
+        lines.append(f"max_retries = {profile.max_retries}")
+    if profile.fast is not None:
+        lines.append(f"fast = {'true' if profile.fast else 'false'}")
+    if profile.debate_rounds is not None:
+        lines.append(f"debate_rounds = {profile.debate_rounds}")
+    return lines
 
 
 def _optional_str(value: object) -> str | None:
