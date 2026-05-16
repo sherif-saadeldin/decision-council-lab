@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Callable
 
 from council.config import Settings
 from council.model_presets import OLLAMA_BASE_URL, list_preset_names
+from council.secrets import credential_source
 from council.models import RUN_SCHEMA_VERSION
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
 from council.runtime import RuntimeOptions
@@ -121,23 +121,11 @@ def _credential_checks(settings: Settings) -> list[DoctorCheck]:
         return checks
 
     if settings.llm_mode == "openai":
-        present = _env_present("OPENAI_API_KEY")
-        checks.append(
-            DoctorCheck(
-                name="OPENAI_API_KEY",
-                status=CheckStatus.OK if present else CheckStatus.FAIL,
-                message="Set" if present else "Missing (required for openai mode)",
-            )
-        )
+        checks.append(_credential_source_check("OPENAI_API_KEY", required_for="openai mode"))
         return checks
 
-    llm_key_present = _env_present("LLM_API_KEY")
     checks.append(
-        DoctorCheck(
-            name="LLM_API_KEY",
-            status=CheckStatus.OK if llm_key_present else CheckStatus.FAIL,
-            message="Set" if llm_key_present else "Missing (required for openai_compatible mode)",
-        )
+        _credential_source_check("LLM_API_KEY", required_for="openai_compatible mode"),
     )
     base_ok = bool(settings.llm_base_url)
     checks.append(
@@ -189,8 +177,19 @@ def _live_provider_check(settings: Settings) -> DoctorCheck:
     )
 
 
-def _env_present(name: str) -> bool:
-    return bool(os.getenv(name, "").strip())
+def _credential_source_check(name: str, *, required_for: str) -> DoctorCheck:
+    source = credential_source(name)
+    if source == "missing":
+        return DoctorCheck(
+            name=name,
+            status=CheckStatus.FAIL,
+            message=f"source: missing (required for {required_for})",
+        )
+    return DoctorCheck(
+        name=name,
+        status=CheckStatus.OK,
+        message=f"source: {source}",
+    )
 
 
 def _default_http_probe(url: str, timeout: float) -> tuple[bool, str]:

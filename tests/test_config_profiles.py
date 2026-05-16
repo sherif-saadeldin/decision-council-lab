@@ -63,7 +63,7 @@ def test_config_show_never_prints_secrets(tmp_path: Path, capsys) -> None:
 
         render_config_show(Console(), "mock")
     captured = capsys.readouterr()
-    assert "from env only" in captured.out
+    assert "env or keyring" in captured.out
     assert "sk-" not in captured.out
 
 
@@ -178,8 +178,8 @@ def test_profile_display_rows_redact_secrets() -> None:
     from council.config_profiles import ConfigProfile
 
     rows = dict(profile_display_rows(ConfigProfile(name="x", mode="mock")))
-    assert rows["OPENAI_API_KEY"] == "from env only"
-    assert rows["LLM_API_KEY"] == "from env only"
+    assert rows["OPENAI_API_KEY"] == "env or keyring (not in config)"
+    assert rows["LLM_API_KEY"] == "env or keyring (not in config)"
 
 
 def test_resolve_settings_integration(tmp_path: Path) -> None:

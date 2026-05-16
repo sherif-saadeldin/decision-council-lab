@@ -26,7 +26,7 @@ SECRET_FIELD_NAMES = frozenset(
 )
 
 SAMPLE_CONFIG_TOML = """\
-# Decision Council local config (no secrets — API keys stay in env only)
+# Decision Council local config (no secrets — API keys via env or keyring only)
 active_profile = "mock"
 
 [profiles.mock]
@@ -275,8 +275,8 @@ def profile_display_rows(profile: ConfigProfile) -> list[tuple[str, str]]:
             "debate_rounds",
             str(profile.debate_rounds) if profile.debate_rounds is not None else "—",
         ),
-        ("OPENAI_API_KEY", "from env only"),
-        ("LLM_API_KEY", "from env only"),
+        ("OPENAI_API_KEY", "env or keyring (not in config)"),
+        ("LLM_API_KEY", "env or keyring (not in config)"),
     ]
     return rows
 
@@ -352,7 +352,10 @@ def _reject_secret_fields(data: dict[str, Any], *, source: str) -> None:
     for key in data:
         normalized = key.lower().replace("-", "_")
         if normalized in SECRET_FIELD_NAMES or normalized.endswith("_key") or "secret" in normalized:
-            msg = f"Secret field {key!r} is not allowed in {source}. Use environment variables."
+            msg = (
+                f"Secret field {key!r} is not allowed in {source}. "
+                "Use environment variables or `secrets set`."
+            )
             raise ConfigProfileError(msg)
 
 

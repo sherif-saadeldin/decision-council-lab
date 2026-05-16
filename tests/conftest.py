@@ -58,6 +58,25 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[N
 
 
 @pytest.fixture(autouse=True)
+def _isolate_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-memory keyring so tests never touch the OS credential store."""
+    store: dict[tuple[str, str], str] = {}
+
+    def get_password(service: str, username: str) -> str | None:
+        return store.get((service, username))
+
+    def set_password(service: str, username: str, password: str) -> None:
+        store[(service, username)] = password
+
+    def delete_password(service: str, username: str) -> None:
+        store.pop((service, username), None)
+
+    monkeypatch.setattr("council.secrets.keyring.get_password", get_password)
+    monkeypatch.setattr("council.secrets.keyring.set_password", set_password)
+    monkeypatch.setattr("council.secrets.keyring.delete_password", delete_password)
+
+
+@pytest.fixture(autouse=True)
 def _autouse_isolated_env(isolated_env: None) -> None:
     """Every test runs offline with mock-oriented defaults unless it opts out."""
 

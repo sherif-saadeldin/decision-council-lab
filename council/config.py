@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from council.secrets import resolve_secret_value
+
 load_dotenv()
 
 DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
@@ -26,11 +28,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        openai_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+        openai_key = resolve_secret_value("OPENAI_API_KEY")
         openai_model = os.getenv("DEFAULT_MODEL_OPENAI", "").strip() or DEFAULT_OPENAI_MODEL
         provider_name = os.getenv("LLM_PROVIDER_NAME", "").strip() or DEFAULT_COMPATIBLE_PROVIDER_NAME
         base_url = os.getenv("LLM_BASE_URL", "").strip() or None
-        llm_key = os.getenv("LLM_API_KEY", "").strip() or None
+        llm_key = resolve_secret_value("LLM_API_KEY")
         llm_model = os.getenv("LLM_MODEL", "").strip()
         return cls(
             llm_mode=os.getenv("LLM_MODE", "mock").lower(),

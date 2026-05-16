@@ -63,6 +63,8 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `presets` | List model presets (`--list-presets` legacy alias) |
 | `doctor` | Config checks; `--preset`, optional `--live` init only |
 | `version` | App + schema version |
+| `config` | Local profiles in `.dcouncil/config.toml` (no secrets) |
+| `secrets` | OS keyring for `OPENAI_API_KEY` / `LLM_API_KEY` |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
@@ -74,7 +76,15 @@ Progress stages: context → research → skeptic → risk → operator → deba
 - Commands: `config init`, `config list`, `config show PROFILE`, `config use PROFILE`
 - Profiles hold mode/provider/model/runtime fields — never API keys
 - Presets remain built-in routing shortcuts; profile may reference `preset = "openai-mini"`
-- Resolution: defaults → active profile → `--profile` → `--preset` → CLI flags; secrets from env only
+- Resolution: defaults → active profile → `--profile` → `--preset` → CLI flags; secrets from env (highest) or OS keyring
+
+### Secrets (Slice 4.4)
+
+- Module: `council/secrets.py` — `OPENAI_API_KEY`, `LLM_API_KEY` via OS keyring (`keyring` package)
+- CLI: `secrets set|get|list|delete NAME` — `set` uses `getpass`; `get`/`list`/`doctor` never print values
+- Resolution: environment variable → keyring → `MissingProviderCredentialError`
+- Never stored in `.dcouncil/config.toml`, presets, or run artifacts
+- `prompt_debug` redacts resolved secrets passed from settings
 
 ### Supported modes (Slice 3)
 
@@ -97,7 +107,7 @@ Configuration errors:
 - Registry: `council/model_presets.py`
 - CLI: `--preset NAME` overrides `LLM_MODE`, provider name, base URL, and model
 - CLI: `--list-presets` prints preset table (no API keys required)
-- Secrets never stored in presets — `OPENAI_API_KEY` / `LLM_API_KEY` from env only
+- Secrets never stored in presets — `OPENAI_API_KEY` / `LLM_API_KEY` from env or keyring
 - Unknown preset → `UnknownModelPresetError` (clean CLI error, no traceback)
 
 ### Ollama presets (Slice 3.2)

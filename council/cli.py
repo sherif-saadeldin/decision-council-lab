@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
@@ -35,6 +36,13 @@ from council.providers.errors import (
 )
 from council.providers.factory import SUPPORTED_LLM_MODES
 from council.runtime import RuntimeOptions
+from council.secrets import (
+    UnknownSecretNameError,
+    delete_keyring_secret,
+    list_secret_statuses,
+    set_keyring_secret,
+    validate_secret_name,
+)
 from council.version import APP_VERSION
 
 KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
@@ -45,9 +53,10 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     ProviderResponseError,
     ConfigProfileError,
     UnknownConfigProfileError,
+    UnknownSecretNameError,
 )
 
-CLI_COMMANDS = frozenset({"run", "presets", "doctor", "version", "config"})
+CLI_COMMANDS = frozenset({"run", "presets", "doctor", "version", "config", "secrets"})
 PREVIEW_ITEM_COUNT = 3
 
 
@@ -101,6 +110,16 @@ def build_parser() -> argparse.ArgumentParser:
     config_use = config_sub.add_parser("use", help="Set active_profile in config.toml.")
     config_use.add_argument("profile", help="Profile name to activate.")
 
+    secrets_parser = subparsers.add_parser("secrets", help="Manage API keys in the OS keyring.")
+    secrets_sub = secrets_parser.add_subparsers(dest="secrets_command", required=True)
+    secrets_set = secrets_sub.add_parser("set", help="Store a secret in the OS keyring.")
+    secrets_set.add_argument("name", help="Secret name (OPENAI_API_KEY or LLM_API_KEY).")
+    secrets_get = secrets_sub.add_parser("get", help="Report whether a secret is set (never prints value).")
+    secrets_get.add_argument("name", help="Secret name (OPENAI_API_KEY or LLM_API_KEY).")
+    secrets_sub.add_parser("list", help="List supported secrets and availability.")
+    secrets_delete = secrets_sub.add_parser("delete", help="Remove a secret from the OS keyring.")
+    secrets_delete.add_argument("name", help="Secret name (OPENAI_API_KEY or LLM_API_KEY).")
+
     return parser
 
 
@@ -137,7 +156,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--preset",
         metavar="PRESET_NAME",
-        help="Model routing preset (overrides LLM_MODE/model env defaults; keys still from env).",
+        help="Model routing preset (overrides LLM_MODE/model env defaults; keys from env or keyring).",
     )
     parser.add_argument(
         "--debate-rounds",
@@ -285,7 +304,7 @@ def render_config_show(console: Console, profile_name: str) -> None:
 def render_config_init(console: Console, path: Path | None = None) -> None:
     created = init_config_file(path)
     console.print(f"[green]Config ready:[/green] {created}")
-    console.print("API keys remain in environment variables only.")
+    console.print("API keys: environment variables or `python main.py secrets set`.")
 
 
 def render_config_use(console: Console, profile_name: str) -> None:
@@ -306,12 +325,56 @@ def render_preset_list(console: Console) -> None:
         table.add_row(name, preset.provider_name, preset.model, preset.llm_mode, base_url)
     console.print(table)
     console.print(
-        "\nAPI keys from env: OPENAI_API_KEY (openai presets) or LLM_API_KEY (compatible). "
-        "Ollama presets accept LLM_API_KEY=ollama (or omit — defaults to ollama locally)."
+        "\nAPI keys from env or keyring: OPENAI_API_KEY (openai presets) or LLM_API_KEY (compatible). "
+        "Env wins over keyring. Ollama presets accept LLM_API_KEY=ollama (or omit — defaults locally)."
     )
     console.print(
         "Ollama model tags are defaults — run `ollama list` and edit presets if your tags differ."
     )
+
+
+def render_secrets_set(console: Console, name: str, *, prompt_for_value: Callable[[str], str]) -> None:
+    validate_secret_name(name)
+    value = prompt_for_value(f"{name}: ")
+    if not value.strip():
+        console.print(f"[yellow]{name} not changed[/yellow] (empty input).")
+        return
+    set_keyring_secret(name, value.strip())
+    console.print(f"[green]{name} stored in OS keyring.[/green]")
+
+
+def render_secrets_get(console: Console, name: str) -> None:
+    validate_secret_name(name)
+    from council.secrets import credential_source
+
+    source = credential_source(name)
+    if source == "missing":
+        console.print(f"{name} is not set (source: missing).")
+    else:
+        console.print(f"{name} is set (source: {source}).")
+
+
+def render_secrets_list(console: Console) -> None:
+    table = Table(title="Secrets (env overrides keyring)")
+    table.add_column("Name", style="bold")
+    table.add_column("Available")
+    table.add_column("Source")
+    from council.secrets import credential_source
+
+    for name, available in list_secret_statuses():
+        source = credential_source(name)
+        table.add_row(
+            name,
+            "yes" if available else "no",
+            source if available else "missing",
+        )
+    console.print(table)
+
+
+def render_secrets_delete(console: Console, name: str) -> None:
+    validate_secret_name(name)
+    delete_keyring_secret(name)
+    console.print(f"[green]{name} removed from OS keyring.[/green]")
 
 
 def render_version(console: Console) -> None:

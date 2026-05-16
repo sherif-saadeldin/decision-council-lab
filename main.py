@@ -13,6 +13,10 @@ from council.cli import (
     render_known_error,
     render_preset_list,
     render_result,
+    render_secrets_delete,
+    render_secrets_get,
+    render_secrets_list,
+    render_secrets_set,
     render_version,
     resolve_debate_rounds,
     resolve_runtime_options,
@@ -56,11 +60,14 @@ def main(argv: list[str] | None = None) -> int:
     if command == "config":
         return _config_command(args, console, error_console)
 
+    if command == "secrets":
+        return _secrets_command(args, console, error_console)
+
     if command == "run":
         return _run_command(args, console, error_console)
 
     error_console.print(
-        "Unknown command. Use: run, presets, doctor, version, config.",
+        "Unknown command. Use: run, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
@@ -123,6 +130,33 @@ def _run_command(args, console: Console, error_console: Console) -> int:
         return 0
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=args.quiet)
+        return 1
+
+
+def _secrets_command(args, console: Console, error_console: Console) -> int:
+    from getpass import getpass
+
+    sub = getattr(args, "secrets_command", None)
+    try:
+        if sub == "set":
+            render_secrets_set(console, args.name, prompt_for_value=getpass)
+            return 0
+        if sub == "get":
+            render_secrets_get(console, args.name)
+            return 0
+        if sub == "list":
+            render_secrets_list(console)
+            return 0
+        if sub == "delete":
+            render_secrets_delete(console, args.name)
+            return 0
+        error_console.print(
+            "Usage: secrets set|get|list|delete NAME",
+            style="red",
+        )
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
         return 1
 
 

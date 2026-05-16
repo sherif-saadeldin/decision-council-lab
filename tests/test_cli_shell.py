@@ -86,7 +86,7 @@ def test_doctor_openrouter_missing_key_reports_safely(real_settings_from_env: No
         checks = run_doctor(settings, live=False)
     llm_check = next(c for c in checks if c.name == "LLM_API_KEY")
     assert llm_check.status == CheckStatus.FAIL
-    assert "Missing" in llm_check.message
+    assert "source: missing" in llm_check.message
     assert "sk-" not in llm_check.message
 
 

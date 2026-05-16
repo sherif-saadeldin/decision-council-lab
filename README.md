@@ -13,11 +13,11 @@ Copy `.env.example` to `.env` and configure as needed:
 | Variable | Purpose |
 |----------|---------|
 | `LLM_MODE` | `mock` (default), `openai`, or `openai_compatible` |
-| `OPENAI_API_KEY` | Required when `LLM_MODE=openai` |
+| `OPENAI_API_KEY` | Required when `LLM_MODE=openai` (or set via `secrets set`) |
 | `DEFAULT_MODEL_OPENAI` | OpenAI model id (default `gpt-4.1-mini`) |
 | `LLM_PROVIDER_NAME` | Label for compatible provider (e.g. `openrouter`) |
 | `LLM_BASE_URL` | Base URL for `openai_compatible` (e.g. OpenRouter API root) |
-| `LLM_API_KEY` | API key for `openai_compatible` |
+| `LLM_API_KEY` | API key for `openai_compatible` (or set via `secrets set`) |
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
@@ -73,7 +73,7 @@ Swap `LLM_BASE_URL` and `LLM_MODEL` for Groq, Together, Fireworks, DeepInfra, or
 
 ## Model presets (Slice 3.1)
 
-Use `--preset` to apply named routing without setting mode/model env vars each time. API keys still come from env only.
+Use `--preset` to apply named routing without setting mode/model env vars each time. API keys come from env (preferred) or the OS keyring.
 
 ```bash
 uv run python main.py --list-presets
@@ -120,7 +120,9 @@ uv run python main.py config init      # create .dcouncil/config.toml (no secret
 uv run python main.py config list
 uv run python main.py config show mock
 uv run python main.py config use ollama-local
-uv run python main.py doctor           # check mode, env vars, Ollama reachability
+uv run python main.py secrets list
+uv run python main.py secrets set OPENAI_API_KEY
+uv run python main.py doctor           # check mode, credentials, Ollama reachability
 uv run python main.py doctor --profile ollama-local
 uv run python main.py doctor --preset ollama-qwen
 uv run python main.py version
@@ -128,11 +130,24 @@ uv run python main.py run "Your question" --profile mock
 uv run python main.py run "Your question" --preset mock
 ```
 
+### Secrets (OS keyring)
+
+Store API keys locally without putting them in `.env`, config files, or run artifacts. Environment variables override keyring values.
+
+```bash
+uv run python main.py secrets set OPENAI_API_KEY   # secure prompt (getpass)
+uv run python main.py secrets get OPENAI_API_KEY   # reports set/not set only
+uv run python main.py secrets list                 # supported names + source
+uv run python main.py secrets delete OPENAI_API_KEY
+```
+
+Supported names: `OPENAI_API_KEY`, `LLM_API_KEY`. Values are never printed by CLI, doctor, or errors.
+
 ### Config profiles (`.dcouncil/config.toml`)
 
-Non-secret profiles stored project-locally. API keys stay in env only.
+Non-secret profiles stored project-locally. API keys use env or keyring only — never written to config.
 
-Precedence: defaults → `active_profile` → `--profile` → `--preset` → CLI flags → env keys.
+Precedence: defaults → `active_profile` → `--profile` → `--preset` → CLI flags; credentials: env → keyring.
 
 ```bash
 uv run python main.py config init
@@ -262,7 +277,7 @@ uv run python main.py "Test auth error"
 
 Tests are isolated from your shell environment and `.env` provider settings:
 
-- Autouse fixtures clear `LLM_MODE`, API keys, and compatible-provider URLs before each test.
+- Autouse fixtures clear `LLM_MODE`, API keys, compatible-provider URLs, and use an in-memory keyring before each test.
 - `Settings.from_env()` is pinned to mock mode during tests unless a test opts into `real_settings_from_env`.
 - Live OpenAI/Ollama/OpenRouter network calls are blocked; provider unit tests pass `client=mock_client`.
 - Use the `mock_settings` fixture (or `run_mock_council`) when calling `run_council` explicitly.
@@ -284,4 +299,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5 (Anthropic/Gemini native SDK providers). Slice 4.4 added OS keyring secrets.
