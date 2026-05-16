@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from council.models import AgentBrief, DebatePosition, DebateRound, DebateTranscript
+from council.prompt_loader import compose_system_prompt, debate_role_key, get_system_profile
 from council.prompts import EVIDENCE_GUARDRAILS
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
@@ -55,19 +56,6 @@ DEBATE_RULES = (
     "- Use [] for list fields when none apply."
 )
 
-ADVOCATE_INSTRUCTIONS = (
-    "You are the Debate Advocate. Build the strongest case for proceeding (or adopting "
-    "the leading option) using only evidence from council briefs. "
-    "In round 1, cite multiple agent roles. In later rounds, respond directly to the "
-    "skeptic's prior argument (responds_to_prior)."
-)
-
-SKEPTIC_INSTRUCTIONS = (
-    "You are the Debate Skeptic. Build the strongest case against proceeding using only "
-    "evidence from council briefs. You must respond to the advocate's argument this round "
-    "(responds_to_prior). Do not restate your opening position without addressing the advocate."
-)
-
 MODERATOR_INSTRUCTIONS = (
     "You are the Debate Moderator. Summarize this round only:\n"
     "- resolved_points: disagreements narrowed or settled this round\n"
@@ -84,8 +72,35 @@ RISK_OFFICER_INSTRUCTIONS = (
 )
 
 
-def debate_round_instructions() -> str:
-    return f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}\n\nReturn one JSON object with advocate, skeptic, and moderator."
+def advocate_instructions(*, system_profile: str | None = None) -> str:
+    profile = system_profile or get_system_profile()
+    role_key = debate_role_key("advocate")
+    return compose_system_prompt(
+        role_key,
+        profile_name=profile,
+        suffix=f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}",
+    )
+
+
+def skeptic_instructions(*, system_profile: str | None = None) -> str:
+    profile = system_profile or get_system_profile()
+    role_key = debate_role_key("skeptic")
+    return compose_system_prompt(
+        role_key,
+        profile_name=profile,
+        suffix=f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}",
+    )
+
+
+def debate_round_instructions(*, system_profile: str | None = None) -> str:
+    profile = system_profile or get_system_profile()
+    return (
+        f"{DEBATE_RULES}\n\n{EVIDENCE_GUARDRAILS}\n\n"
+        f"{MODERATOR_INSTRUCTIONS}\n\n"
+        f"{advocate_instructions(system_profile=profile)}\n\n"
+        f"{skeptic_instructions(system_profile=profile)}\n\n"
+        "Return one JSON object with advocate, skeptic, and moderator."
+    )
 
 
 def _format_briefs_for_debate(briefs: list[AgentBrief]) -> str:

@@ -28,6 +28,8 @@ from council.role_routing import (
     build_council_routing,
     provider_for_slot,
 )
+from council.prompt_loader import system_profile_context
+from council.prompt_run import attach_prompt_metadata
 from council.runtime import RunBudgetExceededError, RuntimeOptions
 
 AGENT_ROLE_BY_SLOT: dict[str, AgentRole] = {
@@ -130,7 +132,6 @@ def run_council_session(
     create_pack_fn=None,
     plan: CouncilSessionPlan | None = None,
 ) -> CouncilSessionResult:
-    base = request.base_settings or Settings.from_env()
     runtime = request.runtime or RuntimeOptions()
     session_plan = plan or plan_council_session(request)
     routing = session_plan.routing
@@ -141,6 +142,35 @@ def run_council_session(
     debug_collector = PromptDebugCollector()
     question = request.question.strip()
 
+    with system_profile_context(runtime.system_profile):
+        return _run_council_session_inner(
+            request,
+            runtime=runtime,
+            session_plan=session_plan,
+            routing=routing,
+            cost_estimate=cost_estimate,
+            run_id=run_id,
+            run_started=run_started,
+            debug_collector=debug_collector,
+            question=question,
+            progress=progress,
+        )
+
+
+def _run_council_session_inner(
+    request: CouncilSessionRequest,
+    *,
+    runtime: RuntimeOptions,
+    session_plan: CouncilSessionPlan,
+    routing: CouncilRouting,
+    cost_estimate: CouncilCostEstimate,
+    run_id: str,
+    run_started: float,
+    debug_collector: PromptDebugCollector,
+    question: str,
+    progress: ProgressReporter | None,
+) -> CouncilSessionResult:
+    base = request.base_settings or Settings.from_env()
     briefs: list[AgentBrief] = []
     responses: list[ProviderResponse] = []
 
@@ -210,26 +240,29 @@ def run_council_session(
         for assignment in routing.assignments.values()
     ]
 
-    result = CouncilRunResult(
-        dossier=dossier,
-        agent_briefs=briefs,
-        debate_transcript=debate_transcript,
-        provider_metadata=ProviderMetadata(
-            provider_name=chair_meta.provider_name,
-            model_name=chair_meta.model_name,
-            mode=chair_meta.mode,
-            supports_structured_output=chair_meta.supports_structured_output,
-            supports_streaming=chair_meta.supports_streaming,
-            api_mode_preference=chair_meta.api_mode_preference,
-            api_mode_used=chair_meta.api_mode_used,
+    result = attach_prompt_metadata(
+        CouncilRunResult(
+            dossier=dossier,
+            agent_briefs=briefs,
+            debate_transcript=debate_transcript,
+            provider_metadata=ProviderMetadata(
+                provider_name=chair_meta.provider_name,
+                model_name=chair_meta.model_name,
+                mode=chair_meta.mode,
+                supports_structured_output=chair_meta.supports_structured_output,
+                supports_streaming=chair_meta.supports_streaming,
+                api_mode_preference=chair_meta.api_mode_preference,
+                api_mode_used=chair_meta.api_mode_used,
+            ),
+            provider_responses=responses,
+            council_mode="multi",
+            multi_model=not routing.role_play_only,
+            role_play_warning=routing.role_play_warning,
+            role_assignments=role_records,
+            routing_mode=request.routing_mode,
+            cost_estimate=_cost_record(cost_estimate),
         ),
-        provider_responses=responses,
-        council_mode="multi",
-        multi_model=not routing.role_play_only,
-        role_play_warning=routing.role_play_warning,
-        role_assignments=role_records,
-        routing_mode=request.routing_mode,
-        cost_estimate=_cost_record(cost_estimate),
+        system_profile=runtime.system_profile,
     )
 
     return CouncilSessionResult(

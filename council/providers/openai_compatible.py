@@ -10,11 +10,11 @@ from openai import OpenAI
 
 from council.credentials import is_ollama_dummy_key
 from council.debate_prompts import (
-    ADVOCATE_INSTRUCTIONS,
     DEBATE_ROUND_JSON_SCHEMA,
-    SKEPTIC_INSTRUCTIONS,
     _POSITION_SCHEMA,
+    advocate_instructions,
     debate_round_instructions,
+    skeptic_instructions,
     format_advocate_only_user_prompt,
     format_debate_round_user_prompt,
     format_risk_officer_user_prompt,
@@ -233,7 +233,7 @@ class OpenAICompatibleProvider(LLMProvider):
         debug_collector: PromptDebugCollector | None = None,
     ) -> DebatePosition:
         if kind == "advocate":
-            instructions = f"{ADVOCATE_INSTRUCTIONS}\n\nReturn one JSON object for advocate only."
+            instructions = f"{advocate_instructions()}\n\nReturn one JSON object for advocate only."
             user_content = format_advocate_only_user_prompt(
                 question=question,
                 briefs=briefs,
@@ -243,7 +243,7 @@ class OpenAICompatibleProvider(LLMProvider):
             )
             debate_role = DebateRole.ADVOCATE
         elif kind == "skeptic":
-            instructions = f"{SKEPTIC_INSTRUCTIONS}\n\nReturn one JSON object for skeptic only."
+            instructions = f"{skeptic_instructions()}\n\nReturn one JSON object for skeptic only."
             user_content = format_skeptic_only_user_prompt(
                 question=question,
                 briefs=briefs,

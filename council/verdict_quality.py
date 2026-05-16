@@ -4,6 +4,10 @@ from council.models import DecisionDossier, DecisionType
 
 MIN_BULLET_ITEMS = 3
 MIN_DIRECT_ANSWER_LEN = 20
+# Longest question substring allowed inside direct_answer (chars).
+MIN_QUESTION_ECHO_LEN = 32
+# Fraction of normalized question length that triggers echo detection.
+QUESTION_ECHO_RATIO = 0.45
 
 GENERIC_VERDICT_PHRASES: tuple[str, ...] = (
     "time-boxed internal prototype",
@@ -40,6 +44,33 @@ def is_generic_verdict_text(text: str) -> bool:
     return any(phrase in lowered for phrase in GENERIC_VERDICT_PHRASES)
 
 
+def _normalize_for_echo(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def direct_answer_repeats_question(direct_answer: str, question: str) -> bool:
+    """True when direct_answer embeds a long fragment of the decision question."""
+    direct = _normalize_for_echo(direct_answer)
+    normalized_question = _normalize_for_echo(question)
+    if not direct or not normalized_question:
+        return False
+
+    if normalized_question in direct:
+        return True
+
+    q_len = len(normalized_question)
+    if q_len < MIN_QUESTION_ECHO_LEN:
+        return False
+
+    threshold = max(MIN_QUESTION_ECHO_LEN, int(q_len * QUESTION_ECHO_RATIO))
+    for length in range(q_len, threshold - 1, -1):
+        for start in range(0, q_len - length + 1):
+            fragment = normalized_question[start : start + length]
+            if len(fragment) >= threshold and fragment in direct:
+                return True
+    return False
+
+
 def _has_items(items: list[str], *, minimum: int = MIN_BULLET_ITEMS) -> bool:
     cleaned = [item.strip() for item in items if item and item.strip()]
     return len(cleaned) >= minimum
@@ -52,6 +83,8 @@ def verdict_quality_issues(dossier: DecisionDossier) -> list[str]:
         issues.append("direct_answer is missing or too short")
     elif is_generic_verdict_text(direct):
         issues.append("direct_answer reads like generic placeholder text")
+    elif direct_answer_repeats_question(direct, dossier.decision_question):
+        issues.append("direct_answer repeats or quotes too much of the decision question")
 
     if dossier.decision_type not in DecisionType:
         issues.append("decision_type is invalid")

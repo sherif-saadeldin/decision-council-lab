@@ -4,10 +4,10 @@ import json
 import time
 
 from council.debate_prompts import (
-    ADVOCATE_INSTRUCTIONS,
-    SKEPTIC_INSTRUCTIONS,
+    advocate_instructions,
     debate_round_instructions,
     format_debate_round_user_prompt,
+    skeptic_instructions,
 )
 from council.debate_runner import PositionKind
 from council.models import (
@@ -148,7 +148,9 @@ class MockProvider(LLMProvider):
             debug_collector.record(
                 step=f"debate_{kind}_round_{round_number}",
                 role=kind,
-                instructions=ADVOCATE_INSTRUCTIONS if kind == "advocate" else SKEPTIC_INSTRUCTIONS,
+                instructions=advocate_instructions()
+                if kind == "advocate"
+                else skeptic_instructions(),
                 user_content=question,
             )
         return position

@@ -1,0 +1,14 @@
+# System prompt profile — maps runtime roles to markdown files under council/system_prompts/
+name = "default"
+version = "1"
+
+[prompts]
+base = "base.md"
+
+[roles]
+research = "researcher.md"
+skeptic = "skeptic.md"
+risk = "risk.md"
+operator = "operator.md"
+chair = "chair.md"
+advocate = "advocate.md"

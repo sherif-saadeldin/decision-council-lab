@@ -13,9 +13,11 @@ from council.runtime import RuntimeOptions
 from council.verdict_quality import (
     GENERIC_VERDICT_PHRASES,
     VerdictQualityError,
+    direct_answer_repeats_question,
     ensure_verdict_quality_for_pack,
     is_generic_verdict_text,
     is_verdict_quality_sufficient,
+    verdict_quality_issues,
 )
 from tests.conftest import assert_mock_run_schema
 
@@ -24,8 +26,56 @@ def test_mock_council_has_direct_answer(mock_settings: Settings) -> None:
     result, _ = run_council("Should we migrate the billing service to Rust?", settings=mock_settings)
     assert_mock_run_schema(result)
     direct = result.dossier.direct_answer.strip()
+    question = result.dossier.decision_question.strip()
     assert len(direct) >= 20
-    assert "billing" in direct.lower() or "rust" in direct.lower() or "migrate" in direct.lower()
+    assert question.lower() not in direct.lower()
+    assert direct.startswith(("Yes", "No", "Pause", "Proceed with constraints", "Reject"))
+
+
+def test_direct_answer_does_not_contain_full_question(mock_settings: Settings) -> None:
+    question = (
+        "Should I continue building this Decision Council tool as an internal CLI first?"
+    )
+    result, _ = run_council(question, settings=mock_settings)
+    direct = result.dossier.direct_answer.strip()
+    assert question not in direct
+    assert not direct_answer_repeats_question(direct, question)
+
+
+def test_quality_checker_rejects_direct_answer_that_repeats_question() -> None:
+    question = (
+        "Should I continue building this Decision Council tool as an internal CLI first?"
+    )
+    echoed = (
+        f"Yes—build '{question}' as an internal capability first, with scope limited to CLI workflows."
+    )
+    dossier = DecisionDossier(
+        run_id="echo-run",
+        decision_question=question,
+        decision_type=DecisionType.PROCEED_WITH_CONSTRAINTS,
+        direct_answer=echoed,
+        why_this_decision=["One", "Two", "Three"],
+        what_would_change_mind=["A", "B", "C"],
+        next_actions=["N1", "N2", "N3"],
+        do_not_do=["D1", "D2", "D3"],
+        approval_gate="Approve scope before implementation pack work begins.",
+        recommendation="Proceed with constraints.",
+    )
+    assert direct_answer_repeats_question(echoed, question)
+    issues = verdict_quality_issues(dossier)
+    assert any("repeats" in issue for issue in issues)
+    assert not is_verdict_quality_sufficient(dossier)
+
+
+def test_mock_direct_answer_is_clean_sentence(mock_settings: Settings) -> None:
+    result, _ = run_council(
+        "Should we build an internal analytics dashboard?",
+        settings=mock_settings,
+    )
+    direct = result.dossier.direct_answer.strip()
+    assert direct.count("?") == 0
+    assert '"' not in direct and "'" not in direct
+    assert direct.startswith(("Yes", "No", "Pause", "Proceed with constraints", "Reject"))
 
 
 def test_mock_council_has_do_next_do_not_do_and_approval_gate(mock_settings: Settings) -> None:

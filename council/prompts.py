@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from council.models import AgentBrief, AgentRole, DebateTranscript
+from council.prompt_loader import agent_role_key, compose_system_prompt, get_system_profile
 from council.providers.models import ProviderRequest
 
 _STRING_ARRAY = {"type": "array", "items": {"type": "string"}}
@@ -107,29 +108,11 @@ EVIDENCE_GUARDRAILS = (
     "- Prefer qualitative reasoning over fake precision. When uncertain, say so."
 )
 
-ROLE_INSTRUCTIONS: dict[AgentRole, str] = {
-    AgentRole.CONTEXT: (
-        "You are the Context Agent. Define the decision frame: stakeholders, constraints, "
-        "and what success means. Your finding must be specific to the question, "
-        "not generic advice. Do not invent deadlines or numeric targets unless given."
-    ),
-    AgentRole.RESEARCH: (
-        "You are the Research Agent. Identify viable options, precedents, and evidence. "
-        "Cite concrete comparisons or patterns. Avoid vague market platitudes and invented benchmarks."
-    ),
-    AgentRole.SKEPTIC: (
-        "You are the Skeptic Agent. Stress-test the leading option. Name the weakest "
-        "assumptions and what would falsify them. Flag unsupported specificity from other agents."
-    ),
-    AgentRole.RISK: (
-        "You are the Risk Agent. Surface downside scenarios, second-order effects, and "
-        "mitigations. Do not invent incident rates or SLA percentages without evidence."
-    ),
-    AgentRole.OPERATOR: (
-        "You are the Operator Agent. Describe execution sequencing and dependencies. "
-        "Do not invent week counts or team sizes unless provided in the question."
-    ),
-}
+CONTEXT_ROLE_ADDENDUM = (
+    "You are the Context Agent. Define the decision frame: stakeholders, constraints, "
+    "and what success means. Your finding must be specific to the question, "
+    "not generic advice. Do not invent deadlines or numeric targets unless given."
+)
 
 AGENT_OUTPUT_RULES = (
     "Return JSON only matching the schema. Every field is required.\n"
@@ -146,12 +129,12 @@ AGENT_OUTPUT_RULES = (
     "Be concrete. Reference the actual decision question."
 )
 
-CHAIR_INSTRUCTIONS = (
-    "You are the Chair/Judge Agent. You must adjudicate the specific decision question, "
-    "not give generic product-building advice.\n"
-    "Required verdict structure (all fields mandatory):\n"
-    "1. direct_answer — exactly one sentence that answers the decision question directly "
-    "(yes/no/how/which path). Must name the subject of the question.\n"
+CHAIR_VERDICT_SCHEMA = (
+    "Required verdict structure (all JSON fields mandatory):\n"
+    "1. direct_answer — exactly one clean sentence that answers the decision question. "
+    "Start with a clear stance: Yes / No / Pause / Proceed with constraints / Reject. "
+    "State the main constraint or reason in the same sentence. "
+    "Do NOT quote, restate, or repeat the decision question text.\n"
     "2. decision_type — one of: proceed | proceed_with_constraints | pause | reject.\n"
     "3. why_this_decision — exactly 3 concrete reasons tied to council briefs and debate "
     "(not generic platitudes).\n"
@@ -175,17 +158,43 @@ CHAIR_INSTRUCTIONS = (
     "Return JSON only matching the schema."
 )
 
+def _agent_constraints() -> str:
+    return f"{EVIDENCE_GUARDRAILS}\n\n{AGENT_OUTPUT_RULES}"
 
-def agent_instructions(role: AgentRole) -> str:
-    role_text = ROLE_INSTRUCTIONS.get(
-        role,
-        "You are a specialist agent in a decision council.",
+
+def _chair_constraints() -> str:
+    return f"{CHAIR_VERDICT_SCHEMA}\n\n{EVIDENCE_GUARDRAILS}"
+
+
+def agent_instructions(role: AgentRole, *, system_profile: str | None = None) -> str:
+    profile = system_profile or get_system_profile()
+    if role == AgentRole.CONTEXT:
+        return compose_system_prompt(
+            None,
+            profile_name=profile,
+            suffix=f"{CONTEXT_ROLE_ADDENDUM}\n\n{_agent_constraints()}",
+        )
+    role_key = agent_role_key(role)
+    if role_key is None:
+        return compose_system_prompt(
+            None,
+            profile_name=profile,
+            suffix=_agent_constraints(),
+        )
+    return compose_system_prompt(
+        role_key,
+        profile_name=profile,
+        suffix=_agent_constraints(),
     )
-    return f"{role_text}\n\n{EVIDENCE_GUARDRAILS}\n\n{AGENT_OUTPUT_RULES}"
 
 
-def chair_instructions() -> str:
-    return f"{CHAIR_INSTRUCTIONS}\n\n{EVIDENCE_GUARDRAILS}"
+def chair_instructions(*, system_profile: str | None = None) -> str:
+    profile = system_profile or get_system_profile()
+    return compose_system_prompt(
+        "chair",
+        profile_name=profile,
+        suffix=_chair_constraints(),
+    )
 
 
 def format_agent_user_prompt(request: ProviderRequest) -> str:
@@ -238,9 +247,11 @@ def format_dossier_user_prompt(
 
         lines.extend(["", format_debate_transcript_for_chair(debate_transcript)])
     lines.append(
-        "\nSynthesize the final decision dossier. The direct_answer must answer this "
-        "question in one sentence. Provide exactly 3 items each for why_this_decision, "
-        "what_would_change_mind, next_actions (Do Next), and do_not_do. "
+        "\nSynthesize the final decision dossier. The direct_answer must be one clean "
+        "sentence with a clear stance (Yes / No / Pause / Proceed with constraints / Reject) "
+        "and the main constraint or reason — do not quote or repeat the decision question. "
+        "Provide exactly 3 items each for why_this_decision, what_would_change_mind, "
+        "next_actions (Do Next), and do_not_do. "
         "approval_gate must state what the user must approve before implementation work. "
         "Resolve conflicts explicitly. Do not invent metrics or timelines."
     )

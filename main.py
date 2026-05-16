@@ -28,6 +28,7 @@ from council.cli import (
     render_secrets_get,
     render_secrets_list,
     render_secrets_set,
+    render_prompts_inventory,
     render_version,
     resolve_debate_rounds,
     resolve_runs_dir,
@@ -69,6 +70,15 @@ def main(argv: list[str] | None = None) -> int:
         render_version(console)
         return 0
 
+    if command == "prompts":
+        try:
+            profile = getattr(args, "system_profile", None) or "default"
+            render_prompts_inventory(console, system_profile=profile)
+            return 0
+        except KNOWN_PROJECT_ERRORS as exc:
+            render_known_error(error_console, exc, quiet=False)
+            return 1
+
     if command == "doctor":
         try:
             settings = resolve_settings(args)
@@ -109,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
         return _runs_command(args, console, error_console)
 
     error_console.print(
-        "Unknown command. Use: run, council, runs, compare, smoke, setup, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, council, runs, compare, smoke, setup, presets, "
+        "prompts, doctor, version, config, secrets.",
         style="red",
     )
     return 1

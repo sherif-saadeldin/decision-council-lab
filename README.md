@@ -1,6 +1,6 @@
 # Decision Council Lab
 
-Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Risk / Chair), then the chair produces a decision dossier. Schema 1.5 adds multi-model `council` mode with per-role preset routing and optional implementation packs.
+Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Risk / Chair), then the chair produces a decision dossier. Schema 1.7 adds centralized **system prompts** (`council/system_prompts/`), multi-model `council` mode, structured verdict fields (including a one-sentence **Direct Answer** that does not repeat the question), and optional implementation packs.
 
 ## Setup
 
@@ -39,6 +39,17 @@ Copy `.env.example` to `.env` and configure as needed:
 | `LLM_API_KEY` | API key for `openai_compatible` (or set via `secrets set`) |
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
+
+## System prompts (Slice 5.5.2)
+
+Role identity lives in `council/system_prompts/` (`base.md` + per-role files). Profiles in `council/system_profiles/` map roles to files (only `default` today). JSON schemas and evidence guardrails stay in code (`council/prompts.py`).
+
+```bash
+uv run python main.py prompts
+uv run python main.py "Your question?" --preset mock --system-profile default
+```
+
+Each `run.json` includes `prompt_metadata` (`prompt_files`, `prompt_versions`, `prompt_hash`).
 
 ## Run (mock mode)
 
@@ -395,9 +406,10 @@ uv run python main.py council "Question?" \
 ```
 
 - If only one distinct preset is used, the CLI warns that this is **role-play debate**, not multi-model debate.
-- Artifacts include full debate transcript, **model used per role**, verdict fields (decision, confidence, evidence gaps, kill criteria, next actions).
-- After the verdict, you are prompted: `Create implementation pack? [y/N]` — or pass `--create-pack` / `--yes-pack` for non-interactive pack generation.
-- Council `run.md` uses a dedicated layout: session summary, role/model table, debate rounds, chair verdict, pack listing, and next suggested command.
+- Artifacts include full debate transcript, **model used per role**, and a structured verdict: **Direct Answer** (one clean sentence with stance + main constraint; must not quote the question), decision type, Do Next / Do Not Do, approval gate, evidence gaps, kill criteria.
+- After the verdict, you are prompted: `Create implementation pack? [y/N]` — or pass `--create-pack` / `--yes-pack` for non-interactive pack generation (blocked if verdict quality checks fail).
+- Council `run.md` leads with **Direct Answer**, then session summary, role/model table, debate rounds, chair verdict, pack listing, and next suggested command.
+- `runs show` prints full artifact paths (`Open: …`) for `run.md` and `run.json` without truncating.
 - Implementation pack files (Slice 5.3): `mvp_scope.md`, `implementation_plan.md`, `task_breakdown.md`, `cursor_build_prompt.md`, `risk_register.md`, `approval_checklist.md` — each includes source `run_id`, scope boundaries, assumptions, and approval gates.
 
 ```bash
@@ -431,7 +443,7 @@ Each council run is saved under `runs/<run_id>/`:
 
 | File | Purpose |
 |------|---------|
-| `run.json` | Structured record (`schema_version` 1.5, agent briefs, `debate_transcript`, dossier, optional `role_assignments`) |
+| `run.json` | Structured record (`schema_version` 1.7, agent briefs, `debate_transcript`, dossier, `prompt_metadata`, optional `role_assignments`) |
 | `run.md` | Human-readable dossier with Debate Transcript (when rounds > 0), Chair Judgment, evidence sections |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 | `comparisons/<id>/comparison.json` | Multi-preset/profile comparison (from `compare` / `benchmark`) |
@@ -543,4 +555,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.5 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.6 (Anthropic/Gemini native SDK providers).

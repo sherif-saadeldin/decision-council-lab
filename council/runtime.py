@@ -25,6 +25,7 @@ class RuntimeOptions:
     repair_json: bool = False
     api_mode: ApiModePreference = DEFAULT_API_MODE
     max_run_seconds: float | None = None
+    system_profile: str = "default"
 
 
 def cap_retries_for_provider(max_retries: int, provider_name: str) -> int:

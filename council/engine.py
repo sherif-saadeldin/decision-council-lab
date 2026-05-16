@@ -21,6 +21,8 @@ from council.prompt_debug import PromptDebugCollector
 from council.providers.base import LLMProvider
 from council.providers.factory import create_provider
 from council.providers.models import ProviderRequest, ProviderResponse
+from council.prompt_loader import system_profile_context
+from council.prompt_run import attach_prompt_metadata
 from council.runtime import FAST_DEBATE_ROUNDS, RunBudgetExceededError, RuntimeOptions
 
 AGENT_PIPELINE: tuple[AgentRole, ...] = (
@@ -124,70 +126,75 @@ def run_council(
     settings = settings or Settings.from_env()
     runtime = runtime or RuntimeOptions()
     debate_rounds = effective_debate_rounds(debate_rounds, runtime)
-    provider = get_provider(settings, runtime=runtime)
     run_id = str(uuid4())
     debug_collector = PromptDebugCollector() if save_prompt_debug else None
     fast_mode = runtime.fast_mode
     run_started = time.perf_counter()
 
-    graph = build_agent_graph(
-        provider,
-        progress=progress,
-        runtime=runtime,
-        run_started=run_started,
-    )
-    app = graph.compile()
+    with system_profile_context(runtime.system_profile):
+        provider = get_provider(settings, runtime=runtime)
 
-    final_state = app.invoke(
-        {
-            "question": question.strip(),
-            "run_id": run_id,
-            "briefs": [],
-            "provider_responses": [],
-            "debug_collector": debug_collector,
-            "fast_mode": fast_mode,
-        }
-    )
-
-    briefs = final_state["briefs"]
-    debate_transcript: DebateTranscript | None = None
-    _check_run_budget(runtime, run_started)
-    if debate_rounds > 0:
-        debate_transcript = run_debate(
+        graph = build_agent_graph(
             provider,
-            question=question.strip(),
-            briefs=briefs,
-            rounds=debate_rounds,
-            run_id=run_id,
-            debug_collector=debug_collector,
             progress=progress,
+            runtime=runtime,
+            run_started=run_started,
+        )
+        app = graph.compile()
+
+        final_state = app.invoke(
+            {
+                "question": question.strip(),
+                "run_id": run_id,
+                "briefs": [],
+                "provider_responses": [],
+                "debug_collector": debug_collector,
+                "fast_mode": fast_mode,
+            }
         )
 
-    _check_run_budget(runtime, run_started)
-    if progress is not None:
-        progress.on_stage("chair")
+        briefs = final_state["briefs"]
+        debate_transcript: DebateTranscript | None = None
+        _check_run_budget(runtime, run_started)
+        if debate_rounds > 0:
+            debate_transcript = run_debate(
+                provider,
+                question=question.strip(),
+                briefs=briefs,
+                rounds=debate_rounds,
+                run_id=run_id,
+                debug_collector=debug_collector,
+                progress=progress,
+            )
 
-    synthesize = getattr(provider, "synthesize_dossier", None)
-    if not callable(synthesize):
-        msg = "Provider must implement synthesize_dossier for chair synthesis."
-        raise TypeError(msg)
+        _check_run_budget(runtime, run_started)
+        if progress is not None:
+            progress.on_stage("chair")
 
-    dossier: DecisionDossier = synthesize(
-        question=question.strip(),
-        briefs=briefs,
-        run_id=run_id,
-        debug_collector=debug_collector,
-        debate_transcript=debate_transcript,
-        fast_mode=fast_mode,
-    )
+        synthesize = getattr(provider, "synthesize_dossier", None)
+        if not callable(synthesize):
+            msg = "Provider must implement synthesize_dossier for chair synthesis."
+            raise TypeError(msg)
 
-    result = CouncilRunResult(
-        dossier=dossier,
-        agent_briefs=briefs,
-        debate_transcript=debate_transcript,
-        provider_metadata=provider.metadata,
-        provider_responses=final_state["provider_responses"],
-    )
+        dossier: DecisionDossier = synthesize(
+            question=question.strip(),
+            briefs=briefs,
+            run_id=run_id,
+            debug_collector=debug_collector,
+            debate_transcript=debate_transcript,
+            fast_mode=fast_mode,
+        )
+
+        result = attach_prompt_metadata(
+            CouncilRunResult(
+                dossier=dossier,
+                agent_briefs=briefs,
+                debate_transcript=debate_transcript,
+                provider_metadata=provider.metadata,
+                provider_responses=final_state["provider_responses"],
+            ),
+            system_profile=runtime.system_profile,
+        )
     return result, debug_collector
 
 

@@ -106,7 +106,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.6"
+RUN_SCHEMA_VERSION = "1.7"
 
 
 class RoleAssignmentRecord(BaseModel):
@@ -115,6 +115,13 @@ class RoleAssignmentRecord(BaseModel):
     provider_name: str
     model_name: str
     mode: str
+
+
+class PromptRunMetadata(BaseModel):
+    system_profile: str = "default"
+    prompt_versions: dict[str, str] = Field(default_factory=dict)
+    prompt_files: list[str] = Field(default_factory=list)
+    prompt_hash: str = ""
 
 
 class CouncilCostEstimateRecord(BaseModel):
@@ -144,6 +151,7 @@ class CouncilRunResult(BaseModel):
     role_assignments: list[RoleAssignmentRecord] = Field(default_factory=list)
     routing_mode: str | None = None
     cost_estimate: CouncilCostEstimateRecord | None = None
+    prompt_metadata: PromptRunMetadata | None = None
 
     @property
     def provider_name(self) -> str:

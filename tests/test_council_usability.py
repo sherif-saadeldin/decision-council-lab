@@ -154,5 +154,12 @@ def test_main_runs_list_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     summary = get_run_summary(tmp_path, run_id)
     buffer = StringIO()
     render_runs_show(Console(file=buffer, force_terminal=True, width=120), summary)
-    assert run_id in buffer.getvalue()
-    assert "run.md" in buffer.getvalue()
+    output = buffer.getvalue()
+    assert run_id in output
+    assert "run.md" in output
+    assert "run.json" in output
+    assert "Open:" in output
+    flattened = " ".join(output.split())
+    assert str(summary.md_path.resolve()) in flattened
+    assert str(summary.json_path.resolve()) in flattened
+    assert "…" not in output

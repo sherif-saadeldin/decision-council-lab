@@ -12,6 +12,14 @@ from rich.table import Table
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
 from council.costing import CouncilBudgetExceededError
 from council.provider_availability import HostedProviderUnavailableError
+from council.prompt_loader import (
+    PromptLoadError,
+    UnknownSystemProfileError,
+    list_prompt_files,
+    list_system_profiles,
+    load_system_profile,
+    profile_bundle_hash,
+)
 from council.verdict_quality import VerdictQualityError, decision_label
 from council.council_session import CouncilSessionRequest
 from council.role_routing import CouncilRouting, parse_council_preset_list
@@ -70,6 +78,8 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     CouncilBudgetExceededError,
     HostedProviderUnavailableError,
     VerdictQualityError,
+    PromptLoadError,
+    UnknownSystemProfileError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -86,6 +96,7 @@ CLI_COMMANDS = frozenset(
         "setup",
         "council",
         "runs",
+        "prompts",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -205,6 +216,17 @@ def build_parser() -> argparse.ArgumentParser:
     runs_show = runs_sub.add_parser("show", help="Show run paths and a short summary.")
     runs_show.add_argument("run_id", help="Run ID (directory name under runs/).")
     _add_runs_dir_argument(runs_show)
+
+    prompts_parser = subparsers.add_parser(
+        "prompts",
+        help="List system prompt files, versions, and checksums.",
+    )
+    prompts_parser.add_argument(
+        "--system-profile",
+        default="default",
+        metavar="NAME",
+        help="System prompt profile to summarize (default: default).",
+    )
 
     return parser
 
@@ -327,6 +349,7 @@ def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
+    _add_system_profile_argument(parser)
 
 
 def _add_api_mode_argument(parser: argparse.ArgumentParser) -> None:
@@ -415,6 +438,7 @@ def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
+    _add_system_profile_argument(parser)
 
 
 def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
@@ -451,6 +475,7 @@ def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
+    _add_system_profile_argument(parser)
 
 
 def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
@@ -602,6 +627,16 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     _add_profile_argument(parser)
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
+    _add_system_profile_argument(parser)
+
+
+def _add_system_profile_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--system-profile",
+        default="default",
+        metavar="NAME",
+        help="System prompt profile for role identity (default: default).",
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -656,10 +691,12 @@ def resolve_settings(args: argparse.Namespace) -> Settings:
 
 
 def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
+    from dataclasses import replace
+
     profile = _resolve_selected_profile(args)
     argv = getattr(args, "_argv", None)
     fast_explicit = bool(argv and "--fast" in argv)
-    return resolve_runtime_with_profile(
+    runtime = resolve_runtime_with_profile(
         profile,
         cli_timeout=getattr(args, "timeout_seconds", None),
         cli_max_retries=getattr(args, "max_retries", None),
@@ -669,6 +706,8 @@ def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
         cli_repair_json=bool(getattr(args, "repair_json", False)),
         cli_api_mode=str(getattr(args, "api_mode", "auto")),
     )
+    system_profile = getattr(args, "system_profile", None) or "default"
+    return replace(runtime, system_profile=system_profile)
 
 
 def _add_runs_dir_argument(parser: argparse.ArgumentParser) -> None:
@@ -947,6 +986,17 @@ def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> No
     )
 
 
+def _run_artifact_path_lines(path: Path) -> tuple[str, str]:
+    """Return (display path, full path) for run artifact output."""
+    resolved = path.resolve()
+    full = str(resolved)
+    try:
+        display = str(resolved.relative_to(Path.cwd()))
+    except ValueError:
+        display = full
+    return display, full
+
+
 def render_runs_show(console: Console, summary) -> None:
     confidence = (
         f"{summary.confidence_score:.0%}"
@@ -962,20 +1012,25 @@ def render_runs_show(console: Console, summary) -> None:
             title="Run Summary",
         )
     )
-    grid = Table.grid(padding=(0, 2))
-    grid.add_column(style="bold")
-    grid.add_column()
-    grid.add_row("Question", summary.question or "—")
-    grid.add_row("Verdict preview", summary.decision_preview or "—")
-    grid.add_row("Chair", f"{summary.chair_provider} / {summary.chair_model}")
-    grid.add_row("Markdown", str(summary.md_path.resolve()))
-    grid.add_row("JSON", str(summary.json_path.resolve()))
-    console.print(grid)
+    console.print(f"[bold]Question[/bold]\n{summary.question or '—'}\n")
+    console.print(f"[bold]Verdict preview[/bold]\n{summary.decision_preview or '—'}\n")
+    console.print(f"[bold]Chair[/bold] {summary.chair_provider} / {summary.chair_model}\n")
+
+    md_display, md_full = _run_artifact_path_lines(summary.md_path)
+    json_display, json_full = _run_artifact_path_lines(summary.json_path)
+    console.print("[bold]Markdown[/bold]")
+    console.out(f"  File: {summary.md_path.name}")
+    console.out(f"  Open: {md_full}")
+    if md_display != md_full:
+        console.out(f"  Path: {md_display}")
+    console.print("[bold]JSON[/bold]")
+    console.out(f"  File: {summary.json_path.name}")
+    console.out(f"  Open: {json_full}")
+    if json_display != json_full:
+        console.out(f"  Path: {json_display}")
+
     if not summary.md_path.is_file():
-        console.print("[yellow]Markdown file missing on disk.[/yellow]")
-    console.print(
-        f"\nOpen the dossier: [bold]{summary.md_path.name}[/bold] in the run folder above."
-    )
+        console.print("\n[yellow]Markdown file missing on disk.[/yellow]")
 
 
 def render_smoke_report(console: Console, report: SmokeReport) -> None:
@@ -1107,6 +1162,34 @@ def render_secrets_delete(console: Console, name: str) -> None:
     validate_secret_name(name)
     delete_keyring_secret(name)
     console.print(f"[green]{name} removed from OS keyring.[/green]")
+
+
+def render_prompts_inventory(console: Console, *, system_profile: str = "default") -> None:
+    profile = load_system_profile(system_profile)
+    bundle_hash = profile_bundle_hash(system_profile)
+    console.print(
+        Panel.fit(
+            f"Profile: [cyan]{profile.name}[/cyan] (v{profile.profile_version})\n"
+            f"Bundle hash: {bundle_hash}",
+            title="System prompts",
+        )
+    )
+    table = Table(title="Prompt files")
+    table.add_column("File", style="bold")
+    table.add_column("Version")
+    table.add_column("SHA-256", overflow="fold")
+    table.add_column("Modified (UTC)")
+    for record in list_prompt_files():
+        table.add_row(
+            record.relative_name,
+            record.version,
+            record.sha256[:16] + "…",
+            record.modified_at.strftime("%Y-%m-%d %H:%M"),
+        )
+    console.print(table)
+    profiles = list_system_profiles()
+    if profiles:
+        console.print(f"\nAvailable profiles: {', '.join(profiles)}")
 
 
 def render_version(console: Console) -> None:

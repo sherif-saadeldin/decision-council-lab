@@ -49,7 +49,23 @@ Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argum
 
 `CouncilRunResult` also includes optional `debate_transcript` (`DebateRound` list with advocate, skeptic, risk officer, moderator per round) and `role_assignments` for multi-model runs.
 
-Shared prompts: `council/prompts.py` (agents + chair), `council/debate_prompts.py` (debate rounds).
+### System prompt architecture (Slice 5.5.2)
+
+Role identity and council philosophy live in markdown under `council/system_prompts/`:
+
+| File | Role |
+|------|------|
+| `base.md` | Global council behavior |
+| `researcher.md` | Research agent |
+| `advocate.md` | Debate advocate |
+| `skeptic.md` | Skeptic agent / debate skeptic |
+| `risk.md` | Risk agent |
+| `operator.md` | Operator agent |
+| `chair.md` | Chair philosophy |
+
+Profiles in `council/system_profiles/*.toml` map runtime roles to files (default: `default.toml`). `council/prompt_loader.py` loads base + role markdown, caches by path, and composes the final system prompt. Programmatic constraints (JSON schemas, evidence guardrails, verdict structure) stay in `council/prompts.py` and `council/debate_prompts.py`.
+
+Each `run.json` records `prompt_metadata`: `system_profile`, `prompt_files`, `prompt_versions`, and `prompt_hash` (bundle checksum). Inspect with `uv run python main.py prompts`. Override profile on runs with `--system-profile default`.
 
 Debate orchestration: `council/debate.py`.
 
@@ -69,6 +85,7 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `setup` | Interactive first-run wizard; optional `--non-interactive --profile NAME` |
 | `council` | Multi-model council: per-role preset routing, cross-model debate, optional implementation pack |
 | `runs` | `runs list` (last 10) and `runs show RUN_ID` — inspect artifacts without dumping full markdown |
+| `prompts` | List system prompt files, versions, SHA-256 checksums, and profile bundle hash |
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
