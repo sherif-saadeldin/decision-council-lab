@@ -18,6 +18,7 @@ Slice 4.2 — CLI app shell, doctor, and runtime controls (done)
 Slice 4.3 — Config profiles (done)
 Slice 4.4 — Secrets management (OS keyring; env overrides) (done)
 Slice 4.5 — Run comparison / benchmark (done)
+Slice 4.6 — Live-provider smoke harness (done)
 Slice 5 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements

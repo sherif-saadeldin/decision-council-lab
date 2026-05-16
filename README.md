@@ -129,6 +129,7 @@ uv run python main.py version
 uv run python main.py run "Your question" --profile mock
 uv run python main.py run "Your question" --preset mock
 uv run python main.py compare "Your question" --presets mock,ollama-qwen --debate-rounds 1
+uv run python main.py smoke --preset mock
 ```
 
 ### Compare / benchmark
@@ -154,6 +155,23 @@ Artifacts:
 | `runs/comparisons/<comparison_id>/comparison.md` | Human-readable comparison |
 
 Exit code `0` if at least one target succeeds; `1` if all targets fail or config is invalid.
+
+### Live smoke test (manual)
+
+Deliberate end-to-end check against a **real** provider. Not used by `pytest` (unit tests stay offline). Uses a fixed safe question by default; debate defaults to `0` for speed.
+
+```bash
+uv run python main.py smoke --preset mock
+uv run python main.py smoke --preset ollama-qwen
+uv run python main.py smoke --preset openai-mini
+uv run python main.py smoke --preset openrouter-sonnet
+
+# Overrides
+uv run python main.py smoke --preset ollama-qwen --question "Your question?"
+uv run python main.py smoke --preset openai-mini --timeout-seconds 90 --debate-rounds 0
+```
+
+Reports provider, model, elapsed time, run paths, decision summary, and quality-field presence. Exit `0` on success, `1` on failure. Secrets are never printed.
 
 ### Secrets (OS keyring)
 
@@ -305,6 +323,7 @@ uv run python main.py "Test auth error"
 Tests are isolated from your shell environment and `.env` provider settings:
 
 - Autouse fixtures clear `LLM_MODE`, API keys, compatible-provider URLs, and use an in-memory keyring before each test.
+- The `smoke` command is manual-only; tests patch `run_smoke` / `run_council` and never call live providers.
 - `Settings.from_env()` is pinned to mock mode during tests unless a test opts into `real_settings_from_env`.
 - Live OpenAI/Ollama/OpenRouter network calls are blocked; provider unit tests pass `client=mock_client`.
 - Use the `mock_settings` fixture (or `run_mock_council`) when calling `run_council` explicitly.

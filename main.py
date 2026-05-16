@@ -5,8 +5,10 @@ from rich.console import Console
 from council.cli import (
     KNOWN_PROJECT_ERRORS,
     build_compare_request,
+    build_smoke_request,
     parse_args,
     render_comparison_result,
+    render_smoke_report,
     render_config_init,
     render_config_list,
     render_config_show,
@@ -25,6 +27,7 @@ from council.cli import (
     resolve_settings,
 )
 from council.compare import run_comparison
+from council.smoke import run_smoke
 from council.doctor import run_doctor
 from council.engine import run_council
 from council.progress import ConsoleProgressReporter, NullProgressReporter
@@ -69,14 +72,28 @@ def main(argv: list[str] | None = None) -> int:
     if command in ("compare", "benchmark"):
         return _compare_command(args, console, error_console)
 
+    if command == "smoke":
+        return _smoke_command(args, console, error_console)
+
     if command == "run":
         return _run_command(args, console, error_console)
 
     error_console.print(
-        "Unknown command. Use: run, compare, presets, doctor, version, config, secrets.",
+        "Unknown command. Use: run, compare, smoke, presets, doctor, version, config, secrets.",
         style="red",
     )
     return 1
+
+
+def _smoke_command(args, console: Console, error_console: Console) -> int:
+    try:
+        request = build_smoke_request(args)
+        report = run_smoke(request)
+        render_smoke_report(console, report)
+        return 0 if report.success else 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
 
 
 def _compare_command(args, console: Console, error_console: Console) -> int:

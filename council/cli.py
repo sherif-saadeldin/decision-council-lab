@@ -37,6 +37,7 @@ from council.providers.errors import (
 )
 from council.providers.factory import SUPPORTED_LLM_MODES
 from council.runtime import RuntimeOptions
+from council.smoke import DEFAULT_SMOKE_QUESTION, SmokeReport, SmokeRequest
 from council.secrets import (
     UnknownSecretNameError,
     delete_keyring_secret,
@@ -59,7 +60,17 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
 )
 
 CLI_COMMANDS = frozenset(
-    {"run", "presets", "doctor", "version", "config", "secrets", "compare", "benchmark"}
+    {
+        "run",
+        "presets",
+        "doctor",
+        "version",
+        "config",
+        "secrets",
+        "compare",
+        "benchmark",
+        "smoke",
+    }
 )
 PREVIEW_ITEM_COUNT = 3
 
@@ -135,6 +146,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_compare_arguments(benchmark_parser)
 
+    smoke_parser = subparsers.add_parser(
+        "smoke",
+        help="Manual live-provider smoke test (not used by pytest).",
+    )
+    _add_smoke_arguments(smoke_parser)
+
     return parser
 
 
@@ -201,6 +218,51 @@ def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
         "--fast",
         action="store_true",
         help="Fast mode: skip debate, concise prompts.",
+    )
+
+
+def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--preset",
+        metavar="PRESET_NAME",
+        required=True,
+        help="Model preset to exercise against a live provider.",
+    )
+    parser.add_argument(
+        "--question",
+        default=None,
+        help=f"Decision question (default: {DEFAULT_SMOKE_QUESTION!r}).",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Directory for run artifacts (default: RUNS_DIR env or ./runs).",
+    )
+    parser.add_argument(
+        "--debate-rounds",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Debate rounds before chair (default: 0 for speed).",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Per-request provider timeout for live LLM calls (default: 120).",
+    )
+
+
+def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
+    question = getattr(args, "question", None) or DEFAULT_SMOKE_QUESTION
+    return SmokeRequest(
+        preset=args.preset,
+        question=question,
+        runs_dir=getattr(args, "runs_dir", None),
+        debate_rounds=max(0, int(args.debate_rounds)),
+        timeout_seconds=getattr(args, "timeout_seconds", None),
     )
 
 
@@ -422,6 +484,29 @@ def render_preset_list(console: Console) -> None:
     console.print(
         "Ollama model tags are defaults — run `ollama list` and edit presets if your tags differ."
     )
+
+
+def render_smoke_report(console: Console, report: SmokeReport) -> None:
+    status = "[green]success[/green]" if report.success else "[red]failure[/red]"
+    table = Table(title=f"Smoke test — {report.preset} ({status})")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Question", report.question)
+    table.add_row("Provider", report.provider_name or "—")
+    table.add_row("Model", report.model_name or "—")
+    table.add_row("Elapsed", f"{report.elapsed_seconds:.2f}s")
+    if report.success:
+        confidence_pct = f"{(report.confidence_score or 0) * 100:.0f}%"
+        table.add_row("Run ID", report.run_id or "—")
+        table.add_row("Decision type", report.decision_type or "—")
+        table.add_row("Confidence", confidence_pct)
+        table.add_row("Evidence gaps present", "yes" if report.has_evidence_gaps else "no")
+        table.add_row("Proposed metrics present", "yes" if report.has_proposed_metrics else "no")
+        table.add_row("JSON artifact", report.run_json_path or "—")
+        table.add_row("Markdown artifact", report.run_md_path or "—")
+    else:
+        table.add_row("Error", report.error or "Unknown error")
+    console.print(table)
 
 
 def render_comparison_result(
