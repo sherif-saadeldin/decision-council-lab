@@ -28,6 +28,7 @@ def test_council_parser_exists() -> None:
 
 def test_build_council_routing_maps_presets_to_roles() -> None:
     routing = build_council_routing(
+        routing_mode="manual",
         council_presets=["mock", "openrouter-free-qwen", "groq-llama", "nvidia-nemotron"],
     )
     assert routing.preset_for("researcher") == "mock"
@@ -61,6 +62,7 @@ def test_multi_model_session_records_per_role_metadata(
 
     request = CouncilSessionRequest(
         question="Should we build an internal council tool first?",
+        routing_mode="manual",
         council_presets=["mock", "openrouter-free-qwen", "groq-llama", "nvidia-nemotron"],
         debate_rounds=1,
         base_settings=Settings(
@@ -89,6 +91,7 @@ def test_implementation_pack_created_only_when_requested(tmp_path: Path) -> None
 
     request = CouncilSessionRequest(
         question="Pack test?",
+        routing_mode="manual",
         council_presets=["mock"],
         debate_rounds=0,
         base_settings=Settings(
@@ -123,6 +126,8 @@ def test_main_council_multi_mock(capsys, tmp_path: Path, monkeypatch: pytest.Mon
             "Council CLI test?",
             "--council-presets",
             "mock,mock,mock,mock,mock,mock",
+            "--routing-mode",
+            "manual",
             "--runs-dir",
             str(tmp_path),
             "--quiet",

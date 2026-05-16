@@ -335,6 +335,32 @@ uv run python main.py council "Should I build X?" \
   --council-presets mock,openrouter-free-qwen,groq-llama,nvidia-nemotron
 ```
 
+### Cost-aware routing (Slice 5.4)
+
+Default routing is **economy** (cheapest presets, fewer debate rounds). Other modes: `balanced`, `premium`, or `manual` (explicit `--council-presets` / `--*-preset`).
+
+```bash
+# Estimate only — no provider calls
+uv run python main.py council "Should I build X?" --dry-run-cost
+
+# Auto economy routing (mock/free tiers; chair may use a free hosted preset)
+uv run python main.py council "Should I build X?" --routing-mode economy
+
+# Budget guards (estimates from preset metadata — not live billing)
+uv run python main.py council "Question?" --routing-mode premium --max-cost-usd 0.05
+uv run python main.py council "Question?" --max-llm-calls 6 --max-debate-rounds 1
+uv run python main.py council "Question?" --allow-over-budget   # bypass caps
+```
+
+| Mode | Behavior |
+|------|----------|
+| `economy` | Free/cheap presets for all roles; chair may use a stronger free preset; default 0 debate rounds |
+| `balanced` | Cheap researcher/operator/risk; medium advocate/skeptic; premium chair; default 1 debate round |
+| `premium` | Strongest configured presets; default 2 debate rounds |
+| `manual` | Your `--council-presets` or per-role presets (unchanged from 5.2) |
+
+Cost metadata lives in `council/preset_economics.py` (`cost_tier`, `estimated_cost_per_call_usd`). Estimates appear in CLI output and council `run.md`.
+
 Per-role routing (overrides `--council-presets` when set):
 
 ```bash
@@ -496,4 +522,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.4 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.5 (Anthropic/Gemini native SDK providers).

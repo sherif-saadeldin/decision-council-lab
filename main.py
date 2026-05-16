@@ -11,6 +11,7 @@ from council.cli import (
     build_smoke_request,
     parse_args,
     render_comparison_result,
+    render_cost_estimate,
     render_council_result,
     render_smoke_report,
     render_config_init,
@@ -35,7 +36,8 @@ from council.cli import (
 )
 from council.compare import run_comparison
 from council.config import Settings
-from council.council_session import run_council_session
+from council.costing import enforce_cost_budget
+from council.council_session import plan_council_session, run_council_session
 from council.setup import run_setup
 from council.smoke import run_smoke
 from council.doctor import run_doctor
@@ -232,13 +234,24 @@ def _council_command(args, console: Console, error_console: Console) -> int:
 
     try:
         request = build_council_request(args)
+        plan = plan_council_session(request)
+        enforce_cost_budget(
+            plan.cost_estimate,
+            max_cost_usd=request.max_cost_usd,
+            max_llm_calls=request.max_llm_calls,
+            allow_over_budget=request.allow_over_budget,
+        )
+        if request.dry_run_cost:
+            render_cost_estimate(console, plan.cost_estimate, routing=plan.routing)
+            return 0
+
         runtime = request.runtime or resolve_runtime_options(args)
         progress = (
             ConsoleProgressReporter(console, enabled=runtime.show_progress)
             if runtime.show_progress
             else NullProgressReporter()
         )
-        session = run_council_session(request, progress=progress)
+        session = run_council_session(request, progress=progress, plan=plan)
         settings = request.base_settings or Settings.from_env()
 
         pack_paths: list[Path] = []
@@ -264,6 +277,7 @@ def _council_command(args, console: Console, error_console: Console) -> int:
             quiet=bool(args.quiet),
             role_play_warning=session.role_play_warning,
             pack_paths=pack_paths,
+            cost_estimate=session.cost_estimate,
         )
         return 0
     except KNOWN_PROJECT_ERRORS as exc:

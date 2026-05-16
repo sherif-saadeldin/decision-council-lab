@@ -10,8 +10,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from council.compare import CompareConfigError, CompareRequest, ComparisonReport, build_targets, parse_csv_targets
+from council.costing import CouncilBudgetExceededError
 from council.council_session import CouncilSessionRequest
-from council.role_routing import parse_council_preset_list
+from council.role_routing import CouncilRouting, parse_council_preset_list
 from council.run_catalog import RunNotFoundError, list_recent_runs
 from council.config import Settings
 from council.config_profiles import (
@@ -64,6 +65,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     InvalidApiModeError,
     ValueError,
     RunNotFoundError,
+    CouncilBudgetExceededError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -206,9 +208,46 @@ def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
         help="Decision question for the multi-model council.",
     )
     parser.add_argument(
+        "--routing-mode",
+        choices=["economy", "balanced", "premium", "manual"],
+        default="economy",
+        help="Cost-aware preset routing (default: economy). Use manual with explicit presets.",
+    )
+    parser.add_argument(
         "--council-presets",
         metavar="PRESETS",
         help="Comma-separated presets mapped to council roles (researcher→chair).",
+    )
+    parser.add_argument(
+        "--max-cost-usd",
+        type=float,
+        default=None,
+        metavar="USD",
+        help="Abort if estimated cost high bound exceeds this value (estimate only).",
+    )
+    parser.add_argument(
+        "--max-llm-calls",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Abort if planned LLM calls exceed this count.",
+    )
+    parser.add_argument(
+        "--max-debate-rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Cap debate rounds after routing-mode default is applied.",
+    )
+    parser.add_argument(
+        "--dry-run-cost",
+        action="store_true",
+        help="Print cost estimate and routing table; do not call providers.",
+    )
+    parser.add_argument(
+        "--allow-over-budget",
+        action="store_true",
+        help="Run even when --max-cost-usd or --max-llm-calls would block.",
     )
     for slot in (
         "researcher",
@@ -241,7 +280,7 @@ def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="N",
-        help="Multi-model debate rounds (default: 1; use 0 to skip).",
+        help="Debate rounds (default depends on --routing-mode; use 0 to skip).",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -401,14 +440,16 @@ def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
+    from council.routing_modes import (
+        has_explicit_slot_presets,
+        normalize_routing_mode,
+        resolve_debate_rounds,
+    )
+
     question = getattr(args, "question", None) or ""
     presets = parse_council_preset_list(getattr(args, "council_presets", None))
-    base = Settings.from_env()
-    if getattr(args, "runs_dir", None) is not None:
-        base = _settings_with_runs_dir(base, args.runs_dir)
-    runtime = resolve_runtime_options(args)
-    return CouncilSessionRequest(
-        question=question,
+    routing_mode = normalize_routing_mode(getattr(args, "routing_mode", "economy"))
+    explicit = has_explicit_slot_presets(
         council_presets=presets or None,
         researcher_preset=getattr(args, "researcher_preset", None),
         advocate_preset=getattr(args, "advocate_preset", None),
@@ -416,11 +457,37 @@ def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
         risk_preset=getattr(args, "risk_preset", None),
         operator_preset=getattr(args, "operator_preset", None),
         chair_preset=getattr(args, "chair_preset", None),
-        debate_rounds=(
-            int(args.debate_rounds)
-            if getattr(args, "debate_rounds", None) is not None
-            else 1
-        ),
+    )
+    if explicit and routing_mode != "manual":
+        routing_mode = routing_mode  # keep mode for debate defaults; slots stay explicit
+    base = Settings.from_env()
+    if getattr(args, "runs_dir", None) is not None:
+        base = _settings_with_runs_dir(base, args.runs_dir)
+    runtime = resolve_runtime_options(args)
+    cli_debate = (
+        int(args.debate_rounds) if getattr(args, "debate_rounds", None) is not None else None
+    )
+    debate_rounds = resolve_debate_rounds(
+        routing_mode,
+        cli_debate_rounds=cli_debate,
+        max_debate_rounds=getattr(args, "max_debate_rounds", None),
+    )
+    return CouncilSessionRequest(
+        question=question,
+        routing_mode=routing_mode,
+        council_presets=presets or None,
+        researcher_preset=getattr(args, "researcher_preset", None),
+        advocate_preset=getattr(args, "advocate_preset", None),
+        skeptic_preset=getattr(args, "skeptic_preset", None),
+        risk_preset=getattr(args, "risk_preset", None),
+        operator_preset=getattr(args, "operator_preset", None),
+        chair_preset=getattr(args, "chair_preset", None),
+        debate_rounds=debate_rounds,
+        max_cost_usd=getattr(args, "max_cost_usd", None),
+        max_llm_calls=getattr(args, "max_llm_calls", None),
+        max_debate_rounds=getattr(args, "max_debate_rounds", None),
+        dry_run_cost=bool(getattr(args, "dry_run_cost", False)),
+        allow_over_budget=bool(getattr(args, "allow_over_budget", False)),
         create_pack=bool(getattr(args, "create_pack", False) or getattr(args, "yes_pack", False)),
         prompt_create_pack=not bool(getattr(args, "yes_pack", False) or getattr(args, "create_pack", False)),
         runtime=runtime,
@@ -702,6 +769,43 @@ def _runs_show_command(run_id: str) -> str:
     return f"uv run python main.py runs show {run_id}"
 
 
+def render_cost_estimate(
+    console: Console,
+    estimate,
+    *,
+    routing: CouncilRouting | None = None,
+) -> None:
+    table = Table(title="Council cost estimate (conservative; not live billing)")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    table.add_row("Routing mode", estimate.routing_mode)
+    table.add_row("Debate rounds", str(estimate.debate_rounds))
+    table.add_row("LLM calls (planned)", str(estimate.llm_call_count))
+    table.add_row("Estimated USD", f"${estimate.estimated_cost_usd:.4f}")
+    table.add_row("Range (low–high)", f"${estimate.estimated_cost_usd_low:.4f} – ${estimate.estimated_cost_usd_high:.4f}")
+    table.add_row("Note", "Estimate from preset metadata only")
+    console.print(table)
+
+    if routing is not None:
+        route_table = Table(title="Role routing")
+        route_table.add_column("Role", style="bold")
+        route_table.add_column("Preset")
+        route_table.add_column("Tier")
+        route_table.add_column("Calls")
+        route_table.add_column("Est. USD")
+        from council.preset_economics import get_preset_economics
+
+        line_by_slot = {line.slot: line for line in estimate.slot_lines}
+        for slot in ("researcher", "advocate", "skeptic", "risk", "operator", "chair"):
+            assignment = routing.assignments[slot]
+            tier = get_preset_economics(assignment.preset).cost_tier
+            line = line_by_slot.get(slot)
+            calls = str(line.llm_calls) if line else "0"
+            usd = f"${line.estimated_usd:.4f}" if line else "—"
+            route_table.add_row(slot, assignment.preset, tier, calls, usd)
+        console.print(route_table)
+
+
 def render_council_result(
     console: Console,
     result,
@@ -711,6 +815,7 @@ def render_council_result(
     quiet: bool,
     role_play_warning: str | None = None,
     pack_paths: list[Path] | None = None,
+    cost_estimate=None,
 ) -> None:
     dossier = result.dossier
     run_id = dossier.run_id
@@ -740,6 +845,9 @@ def render_council_result(
             border_style="green",
         )
     )
+
+    if cost_estimate is not None:
+        render_cost_estimate(console, cost_estimate)
 
     if result.role_assignments:
         table = Table(title="Models per role")

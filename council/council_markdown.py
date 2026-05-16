@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from council.models import CouncilRunResult
+from council.preset_economics import get_preset_economics
 from council.markdown_format import (
     bullet_section,
     format_agent_brief_markdown,
@@ -18,14 +19,46 @@ def _question_title(question: str, *, max_len: int = 80) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _format_cost_estimate_markdown(
+    lines: list[str],
+    result: CouncilRunResult,
+) -> None:
+    estimate = result.cost_estimate
+    if estimate is None:
+        return
+    lines.extend(
+        [
+            "",
+            "## Cost Estimate",
+            "",
+            f"- **Routing mode:** {estimate.routing_mode}",
+            f"- **Debate rounds:** {estimate.debate_rounds}",
+            f"- **Planned LLM calls:** {estimate.llm_call_count}",
+            f"- **Estimated USD:** ${estimate.estimated_cost_usd:.4f} (estimate only)",
+            f"- **Range (low–high):** ${estimate.estimated_cost_usd_low:.4f} – ${estimate.estimated_cost_usd_high:.4f}",
+            "",
+        ]
+    )
+
+
 def _format_role_table(lines: list[str], result: CouncilRunResult) -> None:
     lines.extend(["", "## Role & Model Assignments", ""])
+    if result.routing_mode:
+        lines.append(f"**Routing mode:** {result.routing_mode}")
+        lines.append("")
     if result.role_play_warning:
         lines.extend([f"> {result.role_play_warning}", ""])
-    lines.extend(["| Role | Preset | Provider | Model |", "| --- | --- | --- | --- |"])
+    lines.extend(
+        [
+            "| Role | Preset | Provider | Model | Cost tier |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
     for item in result.role_assignments:
+        tier = get_preset_economics(item.preset).cost_tier
         lines.append(
-            f"| {item.slot} | {item.preset} | {item.provider_name} | `{item.model_name}` |"
+            f"| {item.slot} | {item.preset} | {item.provider_name} | "
+            f"`{item.model_name}` | {tier} |"
         )
     lines.append("")
 
@@ -130,6 +163,7 @@ def format_council_run_markdown(
     decision_type = dossier.decision_type.value.replace("_", " ")
     multi_label = "yes" if result.multi_model else "no (role-play)"
 
+    routing_label = result.routing_mode or "economy"
     lines = [
         f"# Council Session — {_question_title(dossier.decision_question)}",
         "",
@@ -138,6 +172,7 @@ def format_council_run_markdown(
         f"- **Run ID:** `{dossier.run_id}`",
         f"- **Timestamp (UTC):** {dossier.timestamp.isoformat()}",
         f"- **Council mode:** {result.council_mode or 'multi'}",
+        f"- **Routing mode:** {routing_label}",
         f"- **Multi-model debate:** {multi_label}",
         f"- **Schema version:** {result.schema_version}",
         "",
@@ -151,6 +186,8 @@ def format_council_run_markdown(
         "",
         dossier.decision_question,
     ]
+
+    _format_cost_estimate_markdown(lines, result)
 
     if result.role_assignments:
         _format_role_table(lines, result)

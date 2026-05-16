@@ -19,6 +19,7 @@ from main import main
 def test_council_markdown_contains_summary_and_role_table(mock_settings: Settings) -> None:
     request = CouncilSessionRequest(
         question="Markdown layout test?",
+        routing_mode="manual",
         council_presets=["mock"],
         debate_rounds=0,
         base_settings=mock_settings,
@@ -134,6 +135,7 @@ def test_main_runs_list_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     settings = Settings(llm_mode="mock", runs_dir=tmp_path, mock_model="mock-council-v1")
     request = CouncilSessionRequest(
         question="Runs CLI test?",
+        routing_mode="manual",
         council_presets=["mock"],
         debate_rounds=0,
         base_settings=settings,

@@ -6,6 +6,11 @@ from council.config import Settings
 from council.model_presets import apply_preset, preset_role_metadata
 from council.providers.factory import create_provider
 from council.providers.models import ProviderMetadata
+from council.routing_modes import (
+    has_explicit_slot_presets,
+    slot_presets_for_mode,
+    uses_manual_slot_selection,
+)
 from council.runtime import RuntimeOptions
 
 ROLE_PLAY_WARNING = (
@@ -42,6 +47,8 @@ class CouncilRouting:
     unique_preset_count: int
     role_play_only: bool
     role_play_warning: str | None
+    routing_mode: str = "economy"
+    auto_routed: bool = False
 
     def preset_for(self, slot: str) -> str:
         return self.assignments[slot].preset
@@ -74,6 +81,7 @@ def spread_presets_to_slots(presets: list[str]) -> dict[str, str]:
 
 def build_council_routing(
     *,
+    routing_mode: str = "economy",
     council_presets: list[str] | None = None,
     researcher_preset: str | None = None,
     advocate_preset: str | None = None,
@@ -84,6 +92,8 @@ def build_council_routing(
     base_settings: Settings | None = None,
     runtime: RuntimeOptions | None = None,
 ) -> CouncilRouting:
+    _ = base_settings, runtime  # used by provider_for_slot at call time
+
     explicit: dict[str, str | None] = {
         "researcher": researcher_preset,
         "advocate": advocate_preset,
@@ -97,19 +107,33 @@ def build_council_routing(
         msg = "Use either --council-presets or individual --*-preset flags, not both."
         raise ValueError(msg)
 
-    if council_presets:
-        slot_presets = spread_presets_to_slots(council_presets)
-    elif explicit_count:
-        default = next(value for value in explicit.values() if value)
-        slot_presets = {
-            slot: (explicit[slot] or default) for slot in COUNCIL_SLOTS
-        }
+    explicit_presets = has_explicit_slot_presets(
+        council_presets=council_presets,
+        researcher_preset=researcher_preset,
+        advocate_preset=advocate_preset,
+        skeptic_preset=skeptic_preset,
+        risk_preset=risk_preset,
+        operator_preset=operator_preset,
+        chair_preset=chair_preset,
+    )
+    manual = uses_manual_slot_selection(routing_mode, explicit_presets=explicit_presets)
+    auto_routed = False
+
+    if manual:
+        if council_presets:
+            slot_presets = spread_presets_to_slots(council_presets)
+        elif explicit_count:
+            default = next(value for value in explicit.values() if value)
+            slot_presets = {slot: (explicit[slot] or default) for slot in COUNCIL_SLOTS}
+        else:
+            msg = (
+                "Council mode requires --council-presets, role presets, "
+                "or an automatic routing mode (economy, balanced, premium)."
+            )
+            raise ValueError(msg)
     else:
-        msg = (
-            "Council mode requires --council-presets or role presets "
-            "(e.g. --researcher-preset mock --chair-preset mock)."
-        )
-        raise ValueError(msg)
+        slot_presets = slot_presets_for_mode(routing_mode)
+        auto_routed = True
 
     assignments: dict[str, RoleAssignment] = {}
     for slot, preset_name in slot_presets.items():
@@ -130,6 +154,8 @@ def build_council_routing(
         unique_preset_count=len(unique_presets),
         role_play_only=role_play_only,
         role_play_warning=warning,
+        routing_mode=routing_mode,
+        auto_routed=auto_routed,
     )
 
 

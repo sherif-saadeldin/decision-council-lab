@@ -110,6 +110,19 @@ class RoleAssignmentRecord(BaseModel):
     provider_name: str
     model_name: str
     mode: str
+
+
+class CouncilCostEstimateRecord(BaseModel):
+    routing_mode: str
+    debate_rounds: int
+    llm_call_count: int
+    estimated_cost_usd: float
+    estimated_cost_usd_low: float
+    estimated_cost_usd_high: float
+    is_estimate: bool = True
+    slot_lines: list[dict] = Field(default_factory=list)
+
+
 DEFAULT_DEBATE_ROUNDS = 2
 
 
@@ -124,6 +137,8 @@ class CouncilRunResult(BaseModel):
     multi_model: bool = False
     role_play_warning: str | None = None
     role_assignments: list[RoleAssignmentRecord] = Field(default_factory=list)
+    routing_mode: str | None = None
+    cost_estimate: CouncilCostEstimateRecord | None = None
 
     @property
     def provider_name(self) -> str:

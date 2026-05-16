@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from council.config import Settings
+from council.costing import CouncilCostEstimate, estimate_council_cost
 from council.models import (
     AgentBrief,
     AgentRole,
+    CouncilCostEstimateRecord,
     CouncilRunResult,
     DebateTranscript,
     RoleAssignmentRecord,
@@ -37,6 +39,7 @@ DEFAULT_COUNCIL_DEBATE_ROUNDS = 1
 @dataclass(frozen=True)
 class CouncilSessionRequest:
     question: str
+    routing_mode: str = "economy"
     council_presets: list[str] | None = None
     researcher_preset: str | None = None
     advocate_preset: str | None = None
@@ -45,6 +48,11 @@ class CouncilSessionRequest:
     operator_preset: str | None = None
     chair_preset: str | None = None
     debate_rounds: int = DEFAULT_COUNCIL_DEBATE_ROUNDS
+    max_cost_usd: float | None = None
+    max_llm_calls: int | None = None
+    max_debate_rounds: int | None = None
+    dry_run_cost: bool = False
+    allow_over_budget: bool = False
     create_pack: bool = False
     prompt_create_pack: bool = True
     runtime: RuntimeOptions | None = None
@@ -52,23 +60,27 @@ class CouncilSessionRequest:
 
 
 @dataclass(frozen=True)
+class CouncilSessionPlan:
+    routing: CouncilRouting
+    cost_estimate: CouncilCostEstimate
+    debate_rounds: int
+
+
+@dataclass(frozen=True)
 class CouncilSessionResult:
     result: CouncilRunResult
     routing: CouncilRouting
     role_play_warning: str | None
+    cost_estimate: CouncilCostEstimate | None = None
     implementation_pack_paths: list = None  # type: ignore[assignment]
     debug_collector: PromptDebugCollector | None = None
 
 
-def run_council_session(
-    request: CouncilSessionRequest,
-    *,
-    progress: ProgressReporter | None = None,
-    create_pack_fn=None,
-) -> CouncilSessionResult:
+def plan_council_session(request: CouncilSessionRequest) -> CouncilSessionPlan:
     base = request.base_settings or Settings.from_env()
     runtime = request.runtime or RuntimeOptions()
     routing = build_council_routing(
+        routing_mode=request.routing_mode,
         council_presets=request.council_presets,
         researcher_preset=request.researcher_preset,
         advocate_preset=request.advocate_preset,
@@ -79,6 +91,35 @@ def run_council_session(
         base_settings=base,
         runtime=runtime,
     )
+    estimate = estimate_council_cost(
+        routing,
+        routing_mode=request.routing_mode,
+        debate_rounds=request.debate_rounds,
+    )
+    return CouncilSessionPlan(
+        routing=routing,
+        cost_estimate=estimate,
+        debate_rounds=request.debate_rounds,
+    )
+
+
+def _cost_record(estimate: CouncilCostEstimate) -> CouncilCostEstimateRecord:
+    data = estimate.to_record()
+    return CouncilCostEstimateRecord(**data)
+
+
+def run_council_session(
+    request: CouncilSessionRequest,
+    *,
+    progress: ProgressReporter | None = None,
+    create_pack_fn=None,
+    plan: CouncilSessionPlan | None = None,
+) -> CouncilSessionResult:
+    base = request.base_settings or Settings.from_env()
+    runtime = request.runtime or RuntimeOptions()
+    session_plan = plan or plan_council_session(request)
+    routing = session_plan.routing
+    cost_estimate = session_plan.cost_estimate
 
     run_id = str(uuid4())
     run_started = time.perf_counter()
@@ -109,12 +150,13 @@ def run_council_session(
 
     _check_budget(runtime, run_started)
     debate_transcript: DebateTranscript | None = None
-    if request.debate_rounds > 0:
+    debate_rounds = session_plan.debate_rounds
+    if debate_rounds > 0:
         debate_transcript = run_multi_model_debate(
             routing,
             question=question,
             briefs=briefs,
-            rounds=request.debate_rounds,
+            rounds=debate_rounds,
             run_id=run_id,
             debug_collector=debug_collector,
             progress=progress,
@@ -171,12 +213,15 @@ def run_council_session(
         multi_model=not routing.role_play_only,
         role_play_warning=routing.role_play_warning,
         role_assignments=role_records,
+        routing_mode=request.routing_mode,
+        cost_estimate=_cost_record(cost_estimate),
     )
 
     return CouncilSessionResult(
         result=result,
         routing=routing,
         role_play_warning=routing.role_play_warning,
+        cost_estimate=cost_estimate,
         implementation_pack_paths=[],
         debug_collector=debug_collector,
     )

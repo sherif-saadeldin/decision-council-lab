@@ -94,6 +94,18 @@ runs list | runs show RUN_ID
 
 Modules: `council/role_routing.py`, `council/council_session.py`, `council/multi_debate.py`, `council/debate_runner.py`, `council/implementation_pack.py`, `council/council_markdown.py`, `council/run_catalog.py`.
 
+### Cost-aware routing (Slice 5.4)
+
+| Module | Role |
+|--------|------|
+| `council/routing_modes.py` | `economy` / `balanced` / `premium` / `manual` slot maps and debate defaults |
+| `council/preset_economics.py` | Per-preset `cost_tier`, `estimated_cost_per_call_usd`, role fit, local/free flags |
+| `council/costing.py` | LLM call counting, USD estimates, `--max-cost-usd` / `--max-llm-calls` enforcement |
+
+Before a council run: `plan_council_session()` builds routing + cost estimate. `--dry-run-cost` prints the table and exits. Budget caps block unless `--allow-over-budget`.
+
+Explicit `--council-presets` or `--*-preset` flags keep your slot assignment; routing mode still sets debate defaults unless `--debate-rounds` is set.
+
 ### Council usability (Slice 5.3)
 
 - **run.md (council):** `Council Session Summary` → role/model table → debate rounds → chair verdict → implementation pack files → next suggested `runs show` command.
