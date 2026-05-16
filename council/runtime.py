@@ -12,3 +12,4 @@ class RuntimeOptions:
     max_retries: int = 0
     fast_mode: bool = False
     show_progress: bool = True
+    repair_json: bool = False

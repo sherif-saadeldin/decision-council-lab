@@ -13,6 +13,7 @@ from council.model_presets import apply_preset, get_preset
 from council.models import CouncilRunResult
 from council.progress import NullProgressReporter
 from council.providers.errors import ProviderResponseError
+from council.providers.failures import classify_provider_failure
 from council.redaction import redact_secrets
 from council.runtime import DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
 from council.storage import save_run
@@ -32,6 +33,7 @@ class SmokeRequest:
     runs_dir: Path | None = None
     debate_rounds: int = 0
     timeout_seconds: float | None = None
+    repair_json: bool = False
 
 
 class SmokeReport(BaseModel):
@@ -49,6 +51,7 @@ class SmokeReport(BaseModel):
     has_evidence_gaps: bool = False
     has_proposed_metrics: bool = False
     error: str | None = None
+    failure_reason: str | None = None
 
 
 def run_smoke(
@@ -68,6 +71,7 @@ def run_smoke(
             max_retries=0,
             fast_mode=False,
             show_progress=False,
+            repair_json=request.repair_json,
         )
         result, _ = run_council_fn(
             request.question.strip(),
@@ -106,6 +110,7 @@ def run_smoke(
             model_name=preset_meta.model,
             elapsed_seconds=elapsed,
             error=_safe_error_message(exc, settings_for_redaction),
+            failure_reason=classify_provider_failure(exc),
         )
 
 

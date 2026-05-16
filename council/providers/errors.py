@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+from typing import Literal
+
+FailureKind = Literal[
+    "parse_failure",
+    "timeout",
+    "network_failure",
+    "auth_failure",
+    "api_failure",
+    "unknown",
+]
+
 
 class UnsupportedProviderModeError(ValueError):
     """Raised when LLM_MODE is not registered in the provider factory."""
@@ -61,10 +72,20 @@ class MissingProviderConfigError(ValueError):
 class ProviderResponseError(RuntimeError):
     """Raised when provider API calls fail or output cannot be parsed."""
 
-    def __init__(self, provider_name: str, detail: str, *, source: str = "response") -> None:
+    def __init__(
+        self,
+        provider_name: str,
+        detail: str,
+        *,
+        source: str = "response",
+        failure_kind: FailureKind | None = None,
+    ) -> None:
         self.provider_name = provider_name
         self.detail = detail
         self.source = source
+        self.failure_kind: FailureKind | None = (
+            failure_kind if failure_kind is not None else ("parse_failure" if source == "response" else None)
+        )
         if source == "api":
             message = f"{provider_name} provider error: {detail}"
         else:

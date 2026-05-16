@@ -224,6 +224,7 @@ def resolve_runtime_with_profile(
     cli_fast: bool,
     cli_fast_explicit: bool,
     quiet: bool,
+    cli_repair_json: bool = False,
 ) -> RuntimeOptions:
     runtime = RuntimeOptions()
     if profile is not None:
@@ -238,6 +239,7 @@ def resolve_runtime_with_profile(
         max_retries=max(0, max_retries),
         fast_mode=fast_mode,
         show_progress=not quiet,
+        repair_json=cli_repair_json,
     )
 
 

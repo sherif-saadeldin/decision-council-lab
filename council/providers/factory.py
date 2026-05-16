@@ -34,6 +34,8 @@ def create_provider(
             mode=mode,
             timeout_seconds=runtime.timeout_seconds,
             max_retries=runtime.max_retries,
+            runs_dir=settings.runs_dir,
+            repair_json=runtime.repair_json,
         )
     if mode == "openai_compatible":
         provider_name = settings.llm_provider_name
@@ -52,5 +54,7 @@ def create_provider(
             credential_env="LLM_API_KEY",
             timeout_seconds=runtime.timeout_seconds,
             max_retries=runtime.max_retries,
+            runs_dir=settings.runs_dir,
+            repair_json=runtime.repair_json,
         )
     raise UnsupportedProviderModeError(mode, SUPPORTED_LLM_MODES)

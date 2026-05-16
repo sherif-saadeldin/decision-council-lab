@@ -111,6 +111,21 @@ uv run python main.py "Your question" --preset ollama-qwen
 
 Default model tags in presets (`qwen2.5:7b`, `phi3:mini`, etc.) match common pulls. If your `ollama list` names differ, edit `council/model_presets.py` or override with manual `LLM_MODEL` env + `openai_compatible` mode.
 
+#### Local model troubleshooting (JSON / Ollama)
+
+Local models often return markdown fences or prose around JSON. The pipeline:
+
+1. **Extracts** fenced ` ```json ` blocks and the first balanced `{...}` object before failing validation.
+2. **Saves** redacted raw output on parse failure to `runs/<run_id>/raw_response.txt` for inspection.
+3. **Optional repair** — pass `--repair-json` on `run`, `compare`, or `smoke` to retry once (openai_compatible only) with stricter JSON-only instructions.
+
+```bash
+uv run python main.py smoke --preset ollama-qwen --repair-json
+uv run python main.py run "Your question" --preset ollama-qwen --repair-json --debate-rounds 0
+```
+
+`smoke` reports a **failure reason** (`parse_failure`, `timeout`, `network_failure`, `auth_failure`, etc.) without printing secrets. Invalid structures still fail after repair — nothing is silently accepted.
+
 ### CLI commands
 
 ```bash
@@ -171,7 +186,7 @@ uv run python main.py smoke --preset ollama-qwen --question "Your question?"
 uv run python main.py smoke --preset openai-mini --timeout-seconds 90 --debate-rounds 0
 ```
 
-Reports provider, model, elapsed time, run paths, decision summary, and quality-field presence. Exit `0` on success, `1` on failure. Secrets are never printed.
+Reports provider, model, elapsed time, run paths, decision summary, quality-field presence, and **failure reason** on error. Use `--repair-json` for one extra JSON-only retry on compatible providers. Exit `0` on success, `1` on failure. Secrets are never printed.
 
 ### Secrets (OS keyring)
 
@@ -255,6 +270,7 @@ Each council run is saved under `runs/<run_id>/`:
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 | `comparisons/<id>/comparison.json` | Multi-preset/profile comparison (from `compare` / `benchmark`) |
 | `comparisons/<id>/comparison.md` | Human-readable comparison report |
+| `<run_id>/raw_response.txt` | Redacted provider output when JSON parsing fails |
 
 ## Provider contract
 

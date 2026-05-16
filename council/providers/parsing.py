@@ -15,6 +15,7 @@ from council.models import (
     DecisionType,
     ModeratorSummary,
 )
+from council.json_extract import extract_json_text
 from council.providers.errors import ProviderResponseError
 
 PROPOSED_METRIC_PREFIX = "proposed:"
@@ -93,7 +94,11 @@ def parse_agent_brief_payload(
     try:
         parsed = _AgentBriefPayload.model_validate(payload)
     except ValidationError as exc:
-        raise ProviderResponseError(provider_name, f"agent brief validation failed: {exc}") from exc
+        raise ProviderResponseError(
+            provider_name,
+            f"agent brief validation failed: {exc}",
+            failure_kind="parse_failure",
+        ) from exc
 
     return AgentBrief(
         role=role,
@@ -153,7 +158,11 @@ def parse_debate_round_payload(
     try:
         parsed = _DebateRoundPayload.model_validate(payload)
     except ValidationError as exc:
-        raise ProviderResponseError(provider_name, f"debate round validation failed: {exc}") from exc
+        raise ProviderResponseError(
+            provider_name,
+            f"debate round validation failed: {exc}",
+            failure_kind="parse_failure",
+        ) from exc
 
     return DebateRound(
         round_number=round_number,
@@ -183,7 +192,11 @@ def parse_dossier_payload(
     try:
         parsed = _DossierPayload.model_validate(payload)
     except ValidationError as exc:
-        raise ProviderResponseError(provider_name, f"dossier validation failed: {exc}") from exc
+        raise ProviderResponseError(
+            provider_name,
+            f"dossier validation failed: {exc}",
+            failure_kind="parse_failure",
+        ) from exc
 
     return DecisionDossier(
         run_id=run_id,
@@ -212,10 +225,31 @@ def parse_dossier_payload(
 
 
 def _load_json_object(raw_text: str, provider_name: str) -> dict[str, Any]:
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        raise ProviderResponseError(provider_name, "response was not valid JSON.") from exc
-    if not isinstance(data, dict):
-        raise ProviderResponseError(provider_name, "response JSON must be an object.")
-    return data
+    candidates: list[str] = []
+    stripped = raw_text.strip()
+    if stripped:
+        candidates.append(stripped)
+    extracted = extract_json_text(raw_text)
+    if extracted and extracted not in candidates:
+        candidates.append(extracted)
+
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if not isinstance(data, dict):
+            raise ProviderResponseError(
+                provider_name,
+                "response JSON must be an object.",
+                failure_kind="parse_failure",
+            )
+        return data
+
+    raise ProviderResponseError(
+        provider_name,
+        "response was not valid JSON.",
+        failure_kind="parse_failure",
+    ) from last_error

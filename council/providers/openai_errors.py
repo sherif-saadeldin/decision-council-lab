@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AuthenticationError, RateLimitError
 
-from council.providers.errors import ProviderResponseError
+from council.providers.errors import FailureKind, ProviderResponseError
 
 
 def provider_label(provider_name: str) -> str:
@@ -84,7 +84,20 @@ def raise_compatible_provider_error(
         credential_env=credential_env,
         timeout_seconds=timeout_seconds,
     )
-    raise ProviderResponseError(provider_name, detail, source="api") from None
+    failure_kind: FailureKind = "api_failure"
+    lowered = detail.lower()
+    if "authentication" in lowered or "api key" in lowered:
+        failure_kind = "auth_failure"
+    elif "timed out" in lowered or "timeout" in lowered:
+        failure_kind = "timeout"
+    elif "network" in lowered or "connection" in lowered:
+        failure_kind = "network_failure"
+    raise ProviderResponseError(
+        provider_name,
+        detail,
+        source="api",
+        failure_kind=failure_kind,
+    ) from None
 
 
 def raise_openai_provider_error(exc: BaseException) -> None:

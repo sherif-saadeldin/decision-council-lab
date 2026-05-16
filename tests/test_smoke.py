@@ -130,10 +130,12 @@ def test_render_smoke_failure_report_safely(capsys) -> None:
         model_name="gpt-4.1-mini",
         elapsed_seconds=0.5,
         error="Missing required environment variable OPENAI_API_KEY for provider 'openai'.",
+        failure_reason="auth_failure",
     )
     render_smoke_report(Console(), report)
     captured = capsys.readouterr()
     assert "failure" in captured.out
+    assert "auth_failure" in captured.out
     assert "OPENAI_API_KEY" in captured.out
     assert SECRET_VALUE not in captured.out
 
@@ -186,6 +188,7 @@ def test_run_smoke_failure_from_runner_without_network(tmp_path: Path) -> None:
         save_run_fn=lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not save")),
     )
     assert report.success is False
+    assert report.failure_reason == "auth_failure"
     assert report.error
     assert "OPENAI_API_KEY" in report.error
     assert_no_credential_leaks(report.error, [SECRET_VALUE])

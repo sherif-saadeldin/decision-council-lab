@@ -155,6 +155,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_repair_json_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--repair-json",
+        action="store_true",
+        help=(
+            "On parse failure for openai_compatible providers, retry once with "
+            "stricter JSON-only instructions."
+        ),
+    )
+
+
 def _add_profile_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--profile",
@@ -219,6 +230,7 @@ def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Fast mode: skip debate, concise prompts.",
     )
+    _add_repair_json_argument(parser)
 
 
 def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
@@ -253,6 +265,7 @@ def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="SECONDS",
         help="Per-request provider timeout for live LLM calls (default: 120).",
     )
+    _add_repair_json_argument(parser)
 
 
 def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
@@ -263,6 +276,7 @@ def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
         runs_dir=getattr(args, "runs_dir", None),
         debate_rounds=max(0, int(args.debate_rounds)),
         timeout_seconds=getattr(args, "timeout_seconds", None),
+        repair_json=bool(getattr(args, "repair_json", False)),
     )
 
 
@@ -281,6 +295,7 @@ def build_compare_request(args: argparse.Namespace) -> CompareRequest:
         max_retries=getattr(args, "max_retries", None),
         fast=bool(getattr(args, "fast", False)),
         fast_explicit=fast_explicit,
+        repair_json=bool(getattr(args, "repair_json", False)),
     )
 
 
@@ -341,6 +356,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         help="Fast mode: skip debate, concise prompts, labeled in output.",
     )
     _add_profile_argument(parser)
+    _add_repair_json_argument(parser)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -405,6 +421,7 @@ def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
         cli_fast=bool(getattr(args, "fast", False)),
         cli_fast_explicit=fast_explicit,
         quiet=bool(getattr(args, "quiet", False)),
+        cli_repair_json=bool(getattr(args, "repair_json", False)),
     )
 
 
@@ -505,6 +522,8 @@ def render_smoke_report(console: Console, report: SmokeReport) -> None:
         table.add_row("JSON artifact", report.run_json_path or "—")
         table.add_row("Markdown artifact", report.run_md_path or "—")
     else:
+        if report.failure_reason:
+            table.add_row("Failure reason", report.failure_reason)
         table.add_row("Error", report.error or "Unknown error")
     console.print(table)
 
