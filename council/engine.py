@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 
 from council.config import Settings
 from council.models import AgentBrief, AgentRole, CouncilRunResult, DecisionDossier
+from council.prompt_debug import PromptDebugCollector
 from council.providers.base import LLMProvider
 from council.providers.factory import create_provider
 from council.providers.models import ProviderRequest, ProviderResponse
@@ -26,6 +27,7 @@ class CouncilState(TypedDict):
     briefs: list[AgentBrief]
     provider_responses: list[ProviderResponse]
     dossier: DecisionDossier | None
+    debug_collector: PromptDebugCollector | None
 
 
 def get_provider(settings: Settings | None = None) -> LLMProvider:
@@ -41,6 +43,7 @@ def _make_agent_node(role: AgentRole, provider: LLMProvider):
                 question=state["question"],
                 prior_briefs=state["briefs"],
                 run_id=state["run_id"],
+                debug_collector=state["debug_collector"],
             )
         )
         return {
@@ -62,6 +65,7 @@ def _make_chair_node(provider: LLMProvider):
             question=state["question"],
             briefs=state["briefs"],
             run_id=state["run_id"],
+            debug_collector=state["debug_collector"],
         )
         return {"dossier": dossier}
 
@@ -88,10 +92,16 @@ def build_council_graph(provider: LLMProvider) -> StateGraph:
     return graph
 
 
-def run_council(question: str, settings: Settings | None = None) -> CouncilRunResult:
+def run_council(
+    question: str,
+    settings: Settings | None = None,
+    *,
+    save_prompt_debug: bool = False,
+) -> tuple[CouncilRunResult, PromptDebugCollector | None]:
     settings = settings or Settings.from_env()
     provider = get_provider(settings)
     run_id = str(uuid4())
+    debug_collector = PromptDebugCollector() if save_prompt_debug else None
 
     graph = build_council_graph(provider)
     app = graph.compile()
@@ -103,6 +113,7 @@ def run_council(question: str, settings: Settings | None = None) -> CouncilRunRe
             "briefs": [],
             "provider_responses": [],
             "dossier": None,
+            "debug_collector": debug_collector,
         }
     )
 
@@ -111,9 +122,10 @@ def run_council(question: str, settings: Settings | None = None) -> CouncilRunRe
         msg = "Council run completed without a decision dossier."
         raise RuntimeError(msg)
 
-    return CouncilRunResult(
+    result = CouncilRunResult(
         dossier=dossier,
         agent_briefs=final_state["briefs"],
         provider_metadata=provider.metadata,
         provider_responses=final_state["provider_responses"],
     )
+    return result, debug_collector

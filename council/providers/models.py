@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from council.models import AgentBrief, AgentRole
+from council.prompt_debug import PromptDebugCollector
 
 
 class TokenUsage(BaseModel):
@@ -24,6 +25,9 @@ class ProviderRequest(BaseModel):
     question: str
     prior_briefs: list[AgentBrief] = Field(default_factory=list)
     run_id: str | None = None
+    debug_collector: PromptDebugCollector | None = None
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class ProviderResponse(BaseModel):

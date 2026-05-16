@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from council.config import Settings
-from council.models import CouncilRunResult
+from council.models import AgentBrief, CouncilRunResult
 
 
 def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
@@ -15,10 +15,38 @@ def _bullet_section(lines: list[str], heading: str, items: list[str]) -> None:
         lines.append("_None recorded._")
 
 
+def _format_agent_brief_markdown(lines: list[str], brief: AgentBrief) -> None:
+    role_label = brief.role.value.replace("_", " ").title()
+    lines.extend(
+        [
+            f"### {role_label} Agent",
+            "",
+            f"**Headline:** {brief.headline}",
+            f"**Confidence:** {brief.confidence:.0%} ({brief.confidence:.2f})",
+            "",
+            f"**Role-specific finding:** {brief.role_specific_finding}",
+            "",
+            f"**Evidence basis:** {brief.evidence_basis}",
+            "",
+            f"**Uncertainty:** {brief.uncertainty}",
+            "",
+            f"**Decision implication:** {brief.decision_implication}",
+            "",
+            f"**Reasoning:** {brief.reasoning}",
+            "",
+        ]
+    )
+    if brief.source_refs:
+        lines.append("**Sources:**")
+        lines.extend(f"- {ref}" for ref in brief.source_refs)
+        lines.append("")
+
+
 def _format_markdown(result: CouncilRunResult) -> str:
     dossier = result.dossier
     meta = result.provider_metadata
     confidence_pct = f"{dossier.confidence_score:.0%}"
+    decision_type_label = dossier.decision_type.value.replace("_", " ")
 
     lines = [
         "# Decision Council Dossier",
@@ -27,7 +55,20 @@ def _format_markdown(result: CouncilRunResult) -> str:
         "",
         dossier.recommendation,
         "",
+        f"**Decision type:** {decision_type_label}",
         f"**Confidence:** {confidence_pct} ({dossier.confidence_score:.2f})",
+        "",
+        "## Chair Judgment",
+        "",
+        f"**Strongest argument for:** {dossier.strongest_argument_for}",
+        "",
+        f"**Strongest argument against:** {dossier.strongest_argument_against}",
+        "",
+        f"**Deciding factor:** {dossier.deciding_factor}",
+        "",
+        f"**Disagreement resolution:** {dossier.disagreement_resolution}",
+        "",
+        f"**Confidence rationale:** {dossier.confidence_rationale}",
         "",
         "## Run Metadata",
         "",
@@ -37,8 +78,6 @@ def _format_markdown(result: CouncilRunResult) -> str:
         f"- **Provider:** {meta.provider_name}",
         f"- **Model:** {meta.model_name}",
         f"- **Mode:** {meta.mode}",
-        f"- **Structured output:** {meta.supports_structured_output}",
-        f"- **Streaming:** {meta.supports_streaming}",
         "",
         "## Decision Question",
         "",
@@ -69,22 +108,7 @@ def _format_markdown(result: CouncilRunResult) -> str:
 
     lines.extend(["", "## Agent Briefs", ""])
     for brief in result.agent_briefs:
-        role_label = brief.role.value.replace("_", " ").title()
-        lines.extend(
-            [
-                f"### {role_label} Agent",
-                "",
-                f"**Headline:** {brief.headline}",
-                f"**Confidence:** {brief.confidence:.0%} ({brief.confidence:.2f})",
-                "",
-                brief.reasoning,
-                "",
-            ]
-        )
-        if brief.source_refs:
-            lines.append("**Sources:**")
-            lines.extend(f"- {ref}" for ref in brief.source_refs)
-            lines.append("")
+        _format_agent_brief_markdown(lines, brief)
 
     return "\n".join(lines).rstrip() + "\n"
 

@@ -30,10 +30,14 @@ class MissingProviderCredentialError(ValueError):
 
 
 class ProviderResponseError(RuntimeError):
-    """Raised when provider output cannot be parsed into the expected structure."""
+    """Raised when provider API calls fail or output cannot be parsed."""
 
-    def __init__(self, provider_name: str, detail: str) -> None:
+    def __init__(self, provider_name: str, detail: str, *, source: str = "response") -> None:
         self.provider_name = provider_name
         self.detail = detail
-        message = f"{provider_name} provider returned malformed output: {detail}"
+        self.source = source
+        if source == "api":
+            message = f"{provider_name} provider error: {detail}"
+        else:
+            message = f"{provider_name} provider returned malformed output: {detail}"
         super().__init__(message)

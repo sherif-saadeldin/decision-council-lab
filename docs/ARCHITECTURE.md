@@ -38,9 +38,13 @@ All LLM backends implement `LLMProvider`:
 - **ProviderResponse** — `brief`, optional `token_usage`, `latency_ms`, `raw_response`
 - **raw_response** is persisted in `run.json` only; Markdown dossiers omit it.
 
-### Agent brief fields
+### Agent brief fields (schema 1.2)
 
-Each brief includes: `role`, `headline`, `reasoning`, `confidence`, `source_refs`.
+Each brief includes: `role`, `headline`, `role_specific_finding`, `evidence_basis`, `uncertainty`, `decision_implication`, `reasoning`, `confidence`, `source_refs`.
+
+Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argument_for`, `strongest_argument_against`, `deciding_factor`, `confidence_rationale`.
+
+Shared prompts: `council/prompts.py` (used by mock and OpenAI).
 
 ### Supported modes (Slice 2)
 
@@ -62,6 +66,7 @@ Other `LLM_MODE` values raise `UnsupportedProviderModeError`. Missing `OPENAI_AP
 
 ## Run artifacts
 
-- `schema_version` **1.1** on `CouncilRunResult`
+- `schema_version` **1.2** on `CouncilRunResult`
+- optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON
 - Markdown reflects dossier spec section order and agent brief summaries

@@ -20,9 +20,20 @@ class AgentRole(str, Enum):
     CHAIR = "chair"
 
 
+class DecisionType(str, Enum):
+    PROCEED = "proceed"
+    PROCEED_WITH_CONSTRAINTS = "proceed_with_constraints"
+    PAUSE = "pause"
+    REJECT = "reject"
+
+
 class AgentBrief(BaseModel):
     role: AgentRole
     headline: str
+    role_specific_finding: str
+    evidence_basis: str
+    uncertainty: str
+    decision_implication: str
     reasoning: str
     confidence: float = Field(ge=0.0, le=1.0, default=0.0)
     source_refs: list[str] = Field(default_factory=list)
@@ -32,6 +43,12 @@ class DecisionDossier(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     decision_question: str
+    decision_type: DecisionType = DecisionType.PAUSE
+    disagreement_resolution: str = ""
+    strongest_argument_for: str = ""
+    strongest_argument_against: str = ""
+    deciding_factor: str = ""
+    confidence_rationale: str = ""
     assumptions: list[str] = Field(default_factory=list)
     arguments_for: list[str] = Field(default_factory=list)
     arguments_against: list[str] = Field(default_factory=list)
@@ -43,7 +60,7 @@ class DecisionDossier(BaseModel):
     open_questions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.1"
+RUN_SCHEMA_VERSION = "1.2"
 
 
 class CouncilRunResult(BaseModel):

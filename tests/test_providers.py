@@ -6,7 +6,7 @@ import pytest
 
 from council.config import Settings
 from council.engine import get_provider, run_council
-from council.models import RUN_SCHEMA_VERSION, AgentRole
+from council.models import RUN_SCHEMA_VERSION, AgentRole, DecisionType
 from council.providers.errors import UnsupportedProviderModeError
 from council.providers.factory import SUPPORTED_LLM_MODES, create_provider
 from council.providers.mock import MockProvider
@@ -66,9 +66,10 @@ def test_unsupported_provider_mode_error() -> None:
 
 
 def test_run_council_keeps_schema_version_and_metadata() -> None:
-    result = run_council("Internal tool first?")
+    result, _ = run_council("Internal tool first?")
 
     assert result.schema_version == RUN_SCHEMA_VERSION
     assert result.provider_metadata.provider_name == "mock"
+    assert result.dossier.decision_type == DecisionType.PROCEED_WITH_CONSTRAINTS
     assert len(result.provider_responses) == len(AgentRole) - 1
     assert all(item.raw_response for item in result.provider_responses)

@@ -2,34 +2,62 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from council.cli import build_parser, render_result, resolve_settings
+from council.cli import (
+    KNOWN_PROJECT_ERRORS,
+    build_parser,
+    render_known_error,
+    render_result,
+    resolve_settings,
+)
 from council.engine import run_council
+from council.prompt_debug import save_prompt_debug
 from council.storage import save_run
 
 
 def main(argv: list[str] | None = None) -> int:
-    console = Console()
     parser = build_parser()
     args = parser.parse_args(argv)
+    console = Console()
+    error_console = Console(stderr=True)
 
     if not args.question or not args.question.strip():
         parser.print_help()
         return 1
 
-    settings = resolve_settings(args)
-    question = args.question.strip()
+    try:
+        settings = resolve_settings(args)
+        question = args.question.strip()
 
-    result = run_council(question, settings=settings)
-    json_path, md_path = save_run(result, settings=settings)
-    render_result(
-        console,
-        result,
-        json_path,
-        md_path,
-        quiet=args.quiet,
-        runs_dir=settings.runs_dir,
-    )
-    return 0
+        result, debug_collector = run_council(
+            question,
+            settings=settings,
+            save_prompt_debug=args.save_prompt_debug,
+        )
+        json_path, md_path = save_run(result, settings=settings)
+
+        prompt_debug_path = None
+        if args.save_prompt_debug and debug_collector is not None:
+            secrets = [settings.openai_api_key] if settings.openai_api_key else []
+            prompt_debug_path = save_prompt_debug(
+                result,
+                debug_collector,
+                settings.runs_dir,
+                secrets=secrets,
+            )
+
+        render_result(
+            console,
+            result,
+            json_path,
+            md_path,
+            quiet=args.quiet,
+            runs_dir=settings.runs_dir,
+            prompt_debug_path=prompt_debug_path,
+        )
+        return 0
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=args.quiet)
+        return 1
 
 
 if __name__ == "__main__":

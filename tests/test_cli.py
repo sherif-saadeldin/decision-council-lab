@@ -4,7 +4,15 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from council.cli import build_parser, resolve_settings
+import pytest
+
+from council.cli import build_parser, format_user_error, resolve_settings
+from council.providers.errors import (
+    MissingProviderCredentialError,
+    ProviderResponseError,
+    UnsupportedProviderModeError,
+)
+from council.providers.openai_errors import AUTH_FAILED_MESSAGE
 from main import main
 
 
@@ -31,6 +39,74 @@ def test_main_quiet_prints_artifact_paths_only(capsys) -> None:
 
 
 def test_main_without_question_prints_help() -> None:
-    with patch("sys.argv", ["main.py"]):
-        code = main([])
+    code = main([])
     assert code == 1
+
+
+def test_format_user_error_uses_api_detail_only() -> None:
+    exc = ProviderResponseError("openai", AUTH_FAILED_MESSAGE, source="api")
+    assert format_user_error(exc) == AUTH_FAILED_MESSAGE
+    assert "openai provider error" not in format_user_error(exc)
+
+
+def test_main_provider_error_exit_code_no_traceback(capsys) -> None:
+    auth_error = ProviderResponseError("openai", AUTH_FAILED_MESSAGE, source="api")
+
+    with patch("main.run_council", side_effect=auth_error):
+        code = main(["Auth failure test?"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert AUTH_FAILED_MESSAGE in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+    assert "langgraph" not in captured.err.lower()
+
+
+def test_main_quiet_provider_error_is_concise(capsys) -> None:
+    auth_error = ProviderResponseError("openai", AUTH_FAILED_MESSAGE, source="api")
+
+    with patch("main.run_council", side_effect=auth_error):
+        code = main(["Quiet auth failure?", "--quiet"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.err.strip() == AUTH_FAILED_MESSAGE
+    assert "Error" not in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_main_missing_credential_error_no_traceback(capsys) -> None:
+    missing = MissingProviderCredentialError("openai", "OPENAI_API_KEY")
+
+    with patch("main.run_council", side_effect=missing):
+        code = main(["Missing key test?"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "OPENAI_API_KEY" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_main_unsupported_mode_error_no_traceback(capsys) -> None:
+    unsupported = UnsupportedProviderModeError("anthropic", ("mock", "openai"))
+
+    with patch("main.run_council", side_effect=unsupported):
+        code = main(["Unsupported mode test?"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "anthropic" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_main_does_not_swallow_unexpected_errors() -> None:
+    with patch("main.run_council", side_effect=RuntimeError("unexpected bug")):
+        with pytest.raises(RuntimeError, match="unexpected bug"):
+            main(["Unexpected failure?"])
+
+
+def test_mock_mode_still_works_via_cli(capsys) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        code = main(["Mock CLI test?", "--runs-dir", tmp, "--quiet"])
+    assert code == 0
