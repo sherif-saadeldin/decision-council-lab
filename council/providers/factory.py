@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from council.config import Settings
+from council.runtime import RuntimeOptions
 from council.providers.base import LLMProvider
 from council.providers.errors import (
     MissingProviderConfigError,
@@ -14,7 +15,11 @@ from council.providers.openai_provider import OpenAIProvider
 SUPPORTED_LLM_MODES: tuple[str, ...] = ("mock", "openai", "openai_compatible")
 
 
-def create_provider(settings: Settings) -> LLMProvider:
+def create_provider(
+    settings: Settings,
+    runtime: RuntimeOptions | None = None,
+) -> LLMProvider:
+    runtime = runtime or RuntimeOptions()
     mode = settings.llm_mode.lower()
     if mode not in SUPPORTED_LLM_MODES:
         raise UnsupportedProviderModeError(mode, SUPPORTED_LLM_MODES)
@@ -27,6 +32,8 @@ def create_provider(settings: Settings) -> LLMProvider:
             api_key=settings.openai_api_key,
             model_name=settings.openai_model,
             mode=mode,
+            timeout_seconds=runtime.timeout_seconds,
+            max_retries=runtime.max_retries,
         )
     if mode == "openai_compatible":
         provider_name = settings.llm_provider_name
@@ -43,5 +50,7 @@ def create_provider(settings: Settings) -> LLMProvider:
             mode=mode,
             base_url=settings.llm_base_url,
             credential_env="LLM_API_KEY",
+            timeout_seconds=runtime.timeout_seconds,
+            max_retries=runtime.max_retries,
         )
     raise UnsupportedProviderModeError(mode, SUPPORTED_LLM_MODES)

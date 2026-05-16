@@ -176,11 +176,17 @@ def format_agent_user_prompt(request: ProviderRequest) -> str:
             f"(confidence {brief.confidence:.2f}, implication: {brief.decision_implication})"
         )
     prior_section = "\n".join(prior_lines) if prior_lines else "(none yet)"
+    fast_note = (
+        "\nFast mode: be concise; prioritize essential findings only.\n"
+        if request.fast_mode
+        else ""
+    )
     return (
         f"Decision question:\n{request.question}\n\n"
         f"Your role: {request.role.value}\n\n"
         f"Prior council briefs:\n{prior_section}\n\n"
         "Produce your structured agent brief. Follow evidence guardrails."
+        f"{fast_note}"
     )
 
 

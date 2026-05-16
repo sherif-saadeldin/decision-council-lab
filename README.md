@@ -111,21 +111,42 @@ uv run python main.py "Your question" --preset ollama-qwen
 
 Default model tags in presets (`qwen2.5:7b`, `phi3:mini`, etc.) match common pulls. If your `ollama list` names differ, edit `council/model_presets.py` or override with manual `LLM_MODEL` env + `openai_compatible` mode.
 
-### CLI options
+### CLI commands
 
 ```bash
 uv run python main.py --help
-uv run python main.py --list-presets
-uv run python main.py "Your question" --preset mock
-uv run python main.py "Your question" --runs-dir ./runs
-uv run python main.py "Your question" --quiet
-uv run python main.py "Your question" --save-prompt-debug
-uv run python main.py "Your question" --debate-rounds 2
-uv run python main.py "Your question" --debate-rounds 0
+uv run python main.py presets          # list model presets
+uv run python main.py doctor           # check mode, env vars, Ollama reachability
+uv run python main.py doctor --preset ollama-qwen
+uv run python main.py version
+uv run python main.py run "Your question" --preset mock
 ```
 
-- `--debate-rounds N` — structured debate rounds before chair synthesis (default `2`; use `0` to skip)
-- `--save-prompt-debug` — writes `runs/<run_id>/prompt_debug.md` (prompts only; secrets redacted)
+Legacy (still supported):
+
+```bash
+uv run python main.py "Your question" --preset mock
+uv run python main.py --list-presets
+```
+
+### Run options
+
+```bash
+uv run python main.py run "Your question" --runs-dir ./runs
+uv run python main.py run "Your question" --quiet
+uv run python main.py run "Your question" --save-prompt-debug
+uv run python main.py run "Your question" --debate-rounds 2
+uv run python main.py run "Your question" --debate-rounds 0
+uv run python main.py run "Your question" --timeout-seconds 120 --max-retries 1
+uv run python main.py run "Your question" --fast
+```
+
+- `--debate-rounds N` — debate rounds before chair (default `2`; `0` skips; `--fast` forces `0`)
+- `--timeout-seconds` — per-request LLM timeout (default `120`; live providers only)
+- `--max-retries` — API retry count on failure (default `0`)
+- `--fast` — skip debate, concise prompts, labeled in output
+- `--quiet` — artifact paths only; suppresses progress lines
+- `--save-prompt-debug` — writes `runs/<run_id>/prompt_debug.md` (no secrets)
 
 ### Mock with debate (no API key)
 

@@ -26,6 +26,7 @@ class ProviderRequest(BaseModel):
     prior_briefs: list[AgentBrief] = Field(default_factory=list)
     run_id: str | None = None
     debug_collector: PromptDebugCollector | None = None
+    fast_mode: bool = False
 
     model_config = {"arbitrary_types_allowed": True}
 

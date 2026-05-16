@@ -15,6 +15,8 @@ class OpenAIProvider(OpenAICompatibleProvider):
         model_name: str,
         mode: str = "openai",
         client: OpenAI | None = None,
+        timeout_seconds: float | None = None,
+        max_retries: int = 0,
     ) -> None:
         super().__init__(
             provider_name="openai",
@@ -24,4 +26,6 @@ class OpenAIProvider(OpenAICompatibleProvider):
             base_url=None,
             credential_env="OPENAI_API_KEY",
             client=client,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
         )

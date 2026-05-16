@@ -105,9 +105,12 @@ class MockProvider(LLMProvider):
         *,
         debug_collector: PromptDebugCollector | None = None,
         debate_transcript: DebateTranscript | None = None,
+        fast_mode: bool = False,
     ) -> DecisionDossier:
         instructions = chair_instructions()
         user_content = format_dossier_user_prompt(question, briefs, debate_transcript)
+        if fast_mode:
+            user_content = f"{user_content}\n\nFast mode: chair synthesis should be concise."
         if debug_collector is not None:
             debug_collector.record(
                 step="chair_synthesis",

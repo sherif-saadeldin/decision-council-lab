@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from council.cli import build_parser, format_user_error, resolve_settings
+from council.cli import format_user_error, parse_args, resolve_settings
 from council.providers.errors import (
     MissingProviderCredentialError,
     ProviderResponseError,
@@ -17,13 +17,14 @@ from main import main
 
 
 def test_parser_requires_question_or_help() -> None:
-    parser = build_parser()
-    assert parser.parse_args(["What should we do?"]).question == "What should we do?"
+    args = parse_args(["What should we do?"])
+    assert args.command == "run"
+    assert args.question == "What should we do?"
 
 
 def test_resolve_settings_overrides_runs_dir() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        args = build_parser().parse_args(["Test?", "--runs-dir", tmp])
+        args = parse_args(["run", "Test?", "--runs-dir", tmp])
         settings = resolve_settings(args)
         assert settings.runs_dir == Path(tmp)
 
@@ -40,7 +41,7 @@ def test_main_quiet_prints_artifact_paths_only(capsys) -> None:
 
 def test_main_without_question_prints_help() -> None:
     code = main([])
-    assert code == 1
+    assert code == 2
 
 
 def test_format_user_error_uses_api_detail_only() -> None:

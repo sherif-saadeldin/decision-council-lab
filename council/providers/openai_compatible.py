@@ -44,15 +44,23 @@ class OpenAICompatibleProvider(LLMProvider):
         base_url: str | None = None,
         credential_env: str = "LLM_API_KEY",
         client: OpenAI | None = None,
+        timeout_seconds: float | None = None,
+        max_retries: int = 0,
     ) -> None:
         self._api_key = api_key
         self._credential_env = credential_env
+        self._timeout_seconds = timeout_seconds
+        self._max_retries = max(0, max_retries)
         if client is not None:
             self._client = client
         elif base_url is not None:
-            self._client = OpenAI(api_key=api_key, base_url=base_url)
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=timeout_seconds,
+            )
         else:
-            self._client = OpenAI(api_key=api_key)
+            self._client = OpenAI(api_key=api_key, timeout=timeout_seconds)
         self._metadata = ProviderMetadata(
             provider_name=provider_name,
             model_name=model_name,
@@ -81,6 +89,7 @@ class OpenAICompatibleProvider(LLMProvider):
             user_content=user_content,
             schema_name="agent_brief",
             schema=AGENT_BRIEF_JSON_SCHEMA,
+            fast_mode=request.fast_mode,
         )
         brief = parse_agent_brief_payload(
             raw_text,
@@ -142,9 +151,12 @@ class OpenAICompatibleProvider(LLMProvider):
         *,
         debug_collector: PromptDebugCollector | None = None,
         debate_transcript: DebateTranscript | None = None,
+        fast_mode: bool = False,
     ) -> DecisionDossier:
         instructions = chair_instructions()
         user_content = format_dossier_user_prompt(question, briefs, debate_transcript)
+        if fast_mode:
+            user_content = f"{user_content}\n\nFast mode: chair synthesis should be concise."
         self._record_debug(
             debug_collector,
             step="chair_synthesis",
@@ -172,28 +184,41 @@ class OpenAICompatibleProvider(LLMProvider):
         user_content: str,
         schema_name: str,
         schema: dict[str, Any],
+        fast_mode: bool = False,
     ) -> str:
-        try:
-            response = self._client.responses.create(
-                model=self._metadata.model_name,
-                instructions=instructions,
-                input=user_content,
-                stream=False,
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": schema_name,
-                        "strict": True,
-                        "schema": schema,
-                    }
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            raise_compatible_provider_error(
-                exc,
-                provider_name=self._metadata.provider_name,
-                credential_env=self._credential_env,
-            )
+        if fast_mode:
+            user_content = f"{user_content}\n\nFast mode: be concise."
+        attempts = self._max_retries + 1
+        response = None
+        for attempt in range(attempts):
+            try:
+                response = self._client.responses.create(
+                    model=self._metadata.model_name,
+                    instructions=instructions,
+                    input=user_content,
+                    stream=False,
+                    timeout=self._timeout_seconds,
+                    text={
+                        "format": {
+                            "type": "json_schema",
+                            "name": schema_name,
+                            "strict": True,
+                            "schema": schema,
+                        }
+                    },
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                if attempt + 1 >= attempts:
+                    raise_compatible_provider_error(
+                        exc,
+                        provider_name=self._metadata.provider_name,
+                        credential_env=self._credential_env,
+                        timeout_seconds=self._timeout_seconds,
+                    )
+        if response is None:
+            msg = "API call failed with no response."
+            raise ProviderResponseError(self._metadata.provider_name, msg, source="api")
 
         output_text = getattr(response, "output_text", None)
         if not output_text or not str(output_text).strip():

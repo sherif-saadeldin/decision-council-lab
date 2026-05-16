@@ -51,7 +51,22 @@ Chair dossiers add: `decision_type`, `disagreement_resolution`, `strongest_argum
 
 Shared prompts: `council/prompts.py` (agents + chair), `council/debate_prompts.py` (debate rounds).
 
-Debate orchestration: `council/debate.py`. CLI: `--debate-rounds N` (default 2; `0` skips).
+Debate orchestration: `council/debate.py`.
+
+### CLI shell (Slice 4.2)
+
+Subcommands via `main.py` (legacy positional question still maps to `run`):
+
+| Command | Purpose |
+|---------|---------|
+| `run QUESTION` | Full council pipeline + artifacts |
+| `presets` | List model presets (`--list-presets` legacy alias) |
+| `doctor` | Config checks; `--preset`, optional `--live` init only |
+| `version` | App + schema version |
+
+Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
+
+Progress stages: context → research → skeptic → risk → operator → debate round N → chair → storage.
 
 ### Supported modes (Slice 3)
 

@@ -14,6 +14,7 @@ Slice 3.3 — Local model quality guardrails (done)
 Slice 3.4 — Test isolation + schema consistency hardening (done)
 Slice 4 — Research + debate loop (done)
 Slice 4.1 — Type hygiene + docs drift cleanup (done)
+Slice 4.2 — CLI app shell, doctor, and runtime controls (done)
 Slice 5 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements
