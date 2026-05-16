@@ -15,6 +15,7 @@ from council.progress import NullProgressReporter
 from council.providers.errors import ProviderResponseError
 from council.providers.failures import classify_provider_failure
 from council.redaction import redact_secrets
+from council.providers.api_mode import normalize_api_mode
 from council.runtime import DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
 from council.storage import save_run
 
@@ -34,6 +35,7 @@ class SmokeRequest:
     debate_rounds: int = 0
     timeout_seconds: float | None = None
     repair_json: bool = False
+    api_mode: str = "auto"
 
 
 class SmokeReport(BaseModel):
@@ -52,6 +54,8 @@ class SmokeReport(BaseModel):
     has_proposed_metrics: bool = False
     error: str | None = None
     failure_reason: str | None = None
+    api_mode_preference: str | None = None
+    api_mode_used: str | None = None
 
 
 def run_smoke(
@@ -72,6 +76,7 @@ def run_smoke(
             fast_mode=False,
             show_progress=False,
             repair_json=request.repair_json,
+            api_mode=normalize_api_mode(request.api_mode),
         )
         result, _ = run_council_fn(
             request.question.strip(),
@@ -98,6 +103,8 @@ def run_smoke(
             confidence_score=dossier.confidence_score,
             has_evidence_gaps=_has_evidence_gaps(result),
             has_proposed_metrics=_has_proposed_metrics(result),
+            api_mode_preference=meta.api_mode_preference,
+            api_mode_used=meta.api_mode_used,
         )
     except Exception as exc:  # noqa: BLE001
         elapsed = time.perf_counter() - started
@@ -111,6 +118,7 @@ def run_smoke(
             elapsed_seconds=elapsed,
             error=_safe_error_message(exc, settings_for_redaction),
             failure_reason=classify_provider_failure(exc),
+            api_mode_preference=normalize_api_mode(request.api_mode),
         )
 
 

@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
     if command == "doctor":
         try:
             settings = resolve_settings(args)
-            checks = run_doctor(settings, live=bool(args.live))
+            runtime = resolve_runtime_options(args)
+            checks = run_doctor(settings, live=bool(args.live), runtime=runtime)
             return render_doctor(console, checks)
         except KNOWN_PROJECT_ERRORS as exc:
             render_known_error(error_console, exc, quiet=False)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar, cast
 
 from openai import OpenAI
 
@@ -22,6 +23,13 @@ from council.prompts import (
     format_agent_user_prompt,
     format_dossier_user_prompt,
 )
+from council.providers.api_mode import (
+    DEFAULT_API_MODE,
+    ApiModePreference,
+    ApiModeUsed,
+    normalize_api_mode,
+    should_fallback_to_chat,
+)
 from council.providers.base import LLMProvider
 from council.providers.errors import ProviderResponseError
 from council.providers.openai_errors import raise_compatible_provider_error
@@ -38,7 +46,28 @@ REPAIR_JSON_SUFFIX = (
     "No markdown fences, no commentary, no text before or after the JSON object."
 )
 
+JSON_ONLY_SUFFIX = (
+    "\n\nRespond with a single JSON object only. "
+    "No markdown fences, no commentary, no text before or after the JSON object."
+)
+
 T = TypeVar("T")
+
+
+def _raise_compatible(
+    exc: BaseException,
+    *,
+    provider_name: str,
+    credential_env: str,
+    timeout_seconds: float | None,
+) -> NoReturn:
+    raise_compatible_provider_error(
+        exc,
+        provider_name=provider_name,
+        credential_env=credential_env,
+        timeout_seconds=timeout_seconds,
+    )
+    raise AssertionError("unreachable")
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -58,6 +87,7 @@ class OpenAICompatibleProvider(LLMProvider):
         max_retries: int = 0,
         runs_dir: Path | None = None,
         repair_json: bool = False,
+        api_mode: str | ApiModePreference = DEFAULT_API_MODE,
     ) -> None:
         self._api_key = api_key
         self._credential_env = credential_env
@@ -65,6 +95,8 @@ class OpenAICompatibleProvider(LLMProvider):
         self._max_retries = max(0, max_retries)
         self._runs_dir = runs_dir
         self._repair_json = repair_json
+        self._api_mode_preference = normalize_api_mode(api_mode)
+        self._api_mode_locked: ApiModeUsed | None = None
         if client is not None:
             self._client = client
         elif base_url is not None:
@@ -81,11 +113,15 @@ class OpenAICompatibleProvider(LLMProvider):
             mode=mode,
             supports_structured_output=True,
             supports_streaming=False,
+            api_mode_preference=self._api_mode_preference,
+            api_mode_used=None,
         )
 
     @property
     def metadata(self) -> ProviderMetadata:
-        return self._metadata
+        return self._metadata.model_copy(
+            update={"api_mode_used": self._api_mode_locked},
+        )
 
     def complete(self, request: ProviderRequest) -> ProviderResponse:
         started = time.perf_counter()
@@ -248,6 +284,18 @@ class OpenAICompatibleProvider(LLMProvider):
     def _should_attempt_repair(self) -> bool:
         return self._repair_json and self._metadata.mode == "openai_compatible"
 
+    def _lock_api_mode(self, mode: ApiModeUsed) -> None:
+        self._api_mode_locked = mode
+
+    def _resolve_transport(self) -> ApiModeUsed:
+        if self._api_mode_preference == "chat":
+            return "chat"
+        if self._api_mode_preference == "responses":
+            return "responses"
+        if self._api_mode_locked is not None:
+            return self._api_mode_locked
+        return "responses"
+
     def _parse_with_recovery(
         self,
         raw_text: str,
@@ -295,8 +343,57 @@ class OpenAICompatibleProvider(LLMProvider):
             user_content = f"{user_content}\n\nFast mode: be concise."
         if repair:
             instructions = f"{instructions}{REPAIR_JSON_SUFFIX}"
+
+        transport = self._resolve_transport()
+        if transport == "chat":
+            text = self._invoke_chat(
+                instructions=instructions,
+                user_content=user_content,
+                schema_name=schema_name,
+                schema=schema,
+            )
+            self._lock_api_mode("chat")
+            return text
+
+        try:
+            text = self._invoke_responses(
+                instructions=instructions,
+                user_content=user_content,
+                schema_name=schema_name,
+                schema=schema,
+            )
+            self._lock_api_mode("responses")
+            return text
+        except Exception as exc:  # noqa: BLE001
+            if self._api_mode_preference == "auto" and should_fallback_to_chat(
+                exc,
+                provider_name=self._metadata.provider_name,
+            ):
+                text = self._invoke_chat(
+                    instructions=instructions,
+                    user_content=user_content,
+                    schema_name=schema_name,
+                    schema=schema,
+                )
+                self._lock_api_mode("chat")
+                return text
+            _raise_compatible(
+                exc,
+                provider_name=self._metadata.provider_name,
+                credential_env=self._credential_env,
+                timeout_seconds=self._timeout_seconds,
+            )
+
+    def _invoke_responses(
+        self,
+        *,
+        instructions: str,
+        user_content: str,
+        schema_name: str,
+        schema: dict[str, Any],
+    ) -> str:
         attempts = self._max_retries + 1
-        response = None
+        last_exc: Exception | None = None
         for attempt in range(attempts):
             try:
                 response = self._client.responses.create(
@@ -314,33 +411,104 @@ class OpenAICompatibleProvider(LLMProvider):
                         }
                     },
                 )
-                break
+                output_text = getattr(response, "output_text", None)
+                if not output_text or not str(output_text).strip():
+                    msg = "API response contained no output text."
+                    raise ProviderResponseError(
+                        self._metadata.provider_name,
+                        msg,
+                        source="api",
+                        failure_kind="api_failure",
+                    )
+                return str(output_text)
+            except ProviderResponseError:
+                raise
             except Exception as exc:  # noqa: BLE001
+                last_exc = exc
                 if attempt + 1 >= attempts:
-                    raise_compatible_provider_error(
+                    raise
+        if last_exc is not None:
+            raise last_exc
+        msg = "API call failed with no response."
+        raise ProviderResponseError(
+            self._metadata.provider_name,
+            msg,
+            source="api",
+            failure_kind="api_failure",
+        )
+
+    def _invoke_chat(
+        self,
+        *,
+        instructions: str,
+        user_content: str,
+        schema_name: str,
+        schema: dict[str, Any],
+    ) -> str:
+        system_content = self._chat_system_content(instructions, schema_name, schema)
+        messages: list[dict[str, str]] = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ]
+        attempts = self._max_retries + 1
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._metadata.model_name,
+                    messages=cast(Any, messages),
+                    temperature=0,
+                    timeout=self._timeout_seconds,
+                )
+                choice = response.choices[0] if response.choices else None
+                content = choice.message.content if choice and choice.message else None
+                if not content or not str(content).strip():
+                    msg = "Chat completion returned no message content."
+                    raise ProviderResponseError(
+                        self._metadata.provider_name,
+                        msg,
+                        source="api",
+                        failure_kind="api_failure",
+                    )
+                return str(content)
+            except ProviderResponseError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt + 1 >= attempts:
+                    _raise_compatible(
                         exc,
                         provider_name=self._metadata.provider_name,
                         credential_env=self._credential_env,
                         timeout_seconds=self._timeout_seconds,
                     )
-        if response is None:
-            msg = "API call failed with no response."
-            raise ProviderResponseError(
-                self._metadata.provider_name,
-                msg,
-                source="api",
-                failure_kind="api_failure",
+        if last_exc is not None:
+            _raise_compatible(
+                last_exc,
+                provider_name=self._metadata.provider_name,
+                credential_env=self._credential_env,
+                timeout_seconds=self._timeout_seconds,
             )
+        msg = "Chat API call failed with no response."
+        raise ProviderResponseError(
+            self._metadata.provider_name,
+            msg,
+            source="api",
+            failure_kind="api_failure",
+        )
 
-        output_text = getattr(response, "output_text", None)
-        if not output_text or not str(output_text).strip():
-            raise ProviderResponseError(
-                self._metadata.provider_name,
-                "API response contained no output text.",
-                source="api",
-                failure_kind="api_failure",
-            )
-        return str(output_text)
+    @staticmethod
+    def _chat_system_content(
+        instructions: str,
+        schema_name: str,
+        schema: dict[str, Any],
+    ) -> str:
+        schema_text = json.dumps(schema, indent=2, ensure_ascii=False)
+        return (
+            f"{instructions}{JSON_ONLY_SUFFIX}\n\n"
+            f"JSON schema name: {schema_name}\n"
+            f"JSON schema:\n{schema_text}"
+        )
 
     @staticmethod
     def _record_debug(

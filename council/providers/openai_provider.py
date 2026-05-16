@@ -21,6 +21,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
         max_retries: int = 0,
         runs_dir: Path | None = None,
         repair_json: bool = False,
+        api_mode: str = "auto",
     ) -> None:
         super().__init__(
             provider_name="openai",
@@ -34,4 +35,5 @@ class OpenAIProvider(OpenAICompatibleProvider):
             max_retries=max_retries,
             runs_dir=runs_dir,
             repair_json=repair_json,
+            api_mode=api_mode,
         )

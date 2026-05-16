@@ -97,6 +97,21 @@ Progress stages: context → research → skeptic → risk → operator → deba
 - Provider failures are recorded safely; comparison continues unless config is invalid upfront
 - Secrets redacted from failure messages; never written to comparison artifacts
 
+### JSON repair and debug (Slice 4.7)
+
+- `council/json_extract.py` — fenced-block and first-object JSON extraction before validation
+- Parse failures write redacted `runs/<run_id>/raw_response.txt`
+- `--repair-json` — one stricter retry (openai_compatible only) after parse failure
+- Smoke reports `failure_reason` categories
+
+### API mode fallback (Slice 4.8)
+
+- `council/providers/api_mode.py` — preference `responses` | `chat` | `auto` (default `auto`)
+- `OpenAICompatibleProvider` uses Responses API with strict `json_schema` when available
+- `auto`: try Responses once per run, fall back to `/v1/chat/completions` on compatible failures (Ollama, 404, etc.); locks to chat for remaining stages in that run
+- `chat`: system+user messages with JSON schema in system prompt; same parsing/repair path
+- `ProviderMetadata.api_mode_preference` / `api_mode_used` recorded on runs; `doctor` and `smoke` report them
+
 ### Supported modes (Slice 3)
 
 | Mode | Implementation | Notes |

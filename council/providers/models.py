@@ -18,6 +18,8 @@ class ProviderMetadata(BaseModel):
     mode: str
     supports_structured_output: bool = False
     supports_streaming: bool = False
+    api_mode_preference: str = "auto"
+    api_mode_used: str | None = None
 
 
 class ProviderRequest(BaseModel):

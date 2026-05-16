@@ -98,9 +98,13 @@ def real_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, N
 def block_openai_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reject live Responses API calls; provider construction still works with a stub client."""
     stub_client = MagicMock()
-    stub_client.responses.create.side_effect = AssertionError(
-        "Live LLM API call attempted during tests. Mock the client or use LLM_MODE=mock."
-    )
+    def _block_live_call(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "Live LLM API call attempted during tests. Mock the client or use LLM_MODE=mock."
+        )
+
+    stub_client.responses.create.side_effect = _block_live_call
+    stub_client.chat.completions.create.side_effect = _block_live_call
 
     def stub_openai(*_args: object, **_kwargs: object) -> MagicMock:
         return stub_client

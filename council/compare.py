@@ -62,6 +62,7 @@ class CompareRequest:
     fast: bool = False
     fast_explicit: bool = False
     repair_json: bool = False
+    api_mode: str = "auto"
 
 
 class ComparisonRunEntry(BaseModel):
@@ -133,6 +134,7 @@ def run_comparison(request: CompareRequest) -> tuple[ComparisonReport, Path, Pat
         cli_fast_explicit=request.fast_explicit,
         quiet=True,
         cli_repair_json=request.repair_json,
+        cli_api_mode=request.api_mode,
     )
     debate_default = resolve_debate_rounds_with_profile(
         None,
@@ -271,6 +273,7 @@ def _resolve_target(
             cli_fast_explicit=fast_explicit,
             quiet=True,
             cli_repair_json=runtime_base.repair_json,
+            cli_api_mode=runtime_base.api_mode,
         )
     else:
         runtime = runtime_base

@@ -9,6 +9,7 @@ from typing import Any
 from council.config import Settings
 from council.model_presets import apply_preset
 from council.models import DEFAULT_DEBATE_ROUNDS
+from council.providers.api_mode import normalize_api_mode
 from council.runtime import DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
 
 DEFAULT_CONFIG_PATH = Path(".dcouncil/config.toml")
@@ -225,6 +226,7 @@ def resolve_runtime_with_profile(
     cli_fast_explicit: bool,
     quiet: bool,
     cli_repair_json: bool = False,
+    cli_api_mode: str = "auto",
 ) -> RuntimeOptions:
     runtime = RuntimeOptions()
     if profile is not None:
@@ -240,6 +242,7 @@ def resolve_runtime_with_profile(
         fast_mode=fast_mode,
         show_progress=not quiet,
         repair_json=cli_repair_json,
+        api_mode=normalize_api_mode(cli_api_mode),
     )
 
 

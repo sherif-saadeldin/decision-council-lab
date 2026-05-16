@@ -126,6 +126,24 @@ uv run python main.py run "Your question" --preset ollama-qwen --repair-json --d
 
 `smoke` reports a **failure reason** (`parse_failure`, `timeout`, `network_failure`, `auth_failure`, etc.) without printing secrets. Invalid structures still fail after repair — nothing is silently accepted.
 
+#### API mode (Responses vs chat completions)
+
+Ollama and some gateways implement `/v1/chat/completions` more reliably than the OpenAI Responses API. Use `--api-mode`:
+
+| Mode | Behavior |
+|------|----------|
+| `auto` (default) | Try Responses API first; fall back once to chat completions on compatible failures (recommended for Ollama) |
+| `responses` | Responses API only (OpenAI direct, OpenRouter when supported) |
+| `chat` | Chat completions only (`/v1/chat/completions`) |
+
+```bash
+uv run python main.py smoke --preset ollama-qwen --api-mode auto
+uv run python main.py run "Your question" --preset ollama-qwen --api-mode chat --repair-json
+uv run python main.py doctor --preset ollama-qwen
+```
+
+`doctor` and successful `smoke` runs report **API mode (preference)** and **API mode (used)** (`responses` or `chat`).
+
 ### CLI commands
 
 ```bash

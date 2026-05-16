@@ -36,6 +36,7 @@ def create_provider(
             max_retries=runtime.max_retries,
             runs_dir=settings.runs_dir,
             repair_json=runtime.repair_json,
+            api_mode=runtime.api_mode,
         )
     if mode == "openai_compatible":
         provider_name = settings.llm_provider_name
@@ -56,5 +57,6 @@ def create_provider(
             max_retries=runtime.max_retries,
             runs_dir=settings.runs_dir,
             repair_json=runtime.repair_json,
+            api_mode=runtime.api_mode,
         )
     raise UnsupportedProviderModeError(mode, SUPPORTED_LLM_MODES)

@@ -28,6 +28,7 @@ from council.config_profiles import (
 from council.doctor import CheckStatus, DoctorCheck
 from council.model_presets import MODEL_PRESETS, list_preset_names
 from council.models import DEFAULT_DEBATE_ROUNDS, RUN_SCHEMA_VERSION, CouncilRunResult
+from council.providers.api_mode import InvalidApiModeError
 from council.providers.errors import (
     MissingProviderConfigError,
     MissingProviderCredentialError,
@@ -57,6 +58,7 @@ KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
     UnknownConfigProfileError,
     UnknownSecretNameError,
     CompareConfigError,
+    InvalidApiModeError,
 )
 
 CLI_COMMANDS = frozenset(
@@ -114,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Initialize provider (no completion call) to validate setup.",
     )
     _add_profile_argument(doctor_parser)
+    _add_api_mode_argument(doctor_parser)
     subparsers.add_parser("version", help="Show app and schema version.")
 
     config_parser = subparsers.add_parser("config", help="Manage local config profiles.")
@@ -153,6 +156,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_smoke_arguments(smoke_parser)
 
     return parser
+
+
+def _add_api_mode_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--api-mode",
+        choices=["responses", "chat", "auto"],
+        default="auto",
+        help="API transport: OpenAI Responses (preferred), chat completions, or auto fallback.",
+    )
 
 
 def _add_repair_json_argument(parser: argparse.ArgumentParser) -> None:
@@ -231,6 +243,7 @@ def _add_compare_arguments(parser: argparse.ArgumentParser) -> None:
         help="Fast mode: skip debate, concise prompts.",
     )
     _add_repair_json_argument(parser)
+    _add_api_mode_argument(parser)
 
 
 def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
@@ -266,6 +279,7 @@ def _add_smoke_arguments(parser: argparse.ArgumentParser) -> None:
         help="Per-request provider timeout for live LLM calls (default: 120).",
     )
     _add_repair_json_argument(parser)
+    _add_api_mode_argument(parser)
 
 
 def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
@@ -277,6 +291,7 @@ def build_smoke_request(args: argparse.Namespace) -> SmokeRequest:
         debate_rounds=max(0, int(args.debate_rounds)),
         timeout_seconds=getattr(args, "timeout_seconds", None),
         repair_json=bool(getattr(args, "repair_json", False)),
+        api_mode=str(getattr(args, "api_mode", "auto")),
     )
 
 
@@ -296,6 +311,7 @@ def build_compare_request(args: argparse.Namespace) -> CompareRequest:
         fast=bool(getattr(args, "fast", False)),
         fast_explicit=fast_explicit,
         repair_json=bool(getattr(args, "repair_json", False)),
+        api_mode=str(getattr(args, "api_mode", "auto")),
     )
 
 
@@ -357,6 +373,7 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
     )
     _add_profile_argument(parser)
     _add_repair_json_argument(parser)
+    _add_api_mode_argument(parser)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -422,6 +439,7 @@ def resolve_runtime_options(args: argparse.Namespace) -> RuntimeOptions:
         cli_fast_explicit=fast_explicit,
         quiet=bool(getattr(args, "quiet", False)),
         cli_repair_json=bool(getattr(args, "repair_json", False)),
+        cli_api_mode=str(getattr(args, "api_mode", "auto")),
     )
 
 
@@ -514,6 +532,10 @@ def render_smoke_report(console: Console, report: SmokeReport) -> None:
     table.add_row("Elapsed", f"{report.elapsed_seconds:.2f}s")
     if report.success:
         confidence_pct = f"{(report.confidence_score or 0) * 100:.0f}%"
+        if report.api_mode_preference:
+            table.add_row("API mode (preference)", report.api_mode_preference)
+        if report.api_mode_used:
+            table.add_row("API mode (used)", report.api_mode_used)
         table.add_row("Run ID", report.run_id or "—")
         table.add_row("Decision type", report.decision_type or "—")
         table.add_row("Confidence", confidence_pct)
@@ -522,6 +544,8 @@ def render_smoke_report(console: Console, report: SmokeReport) -> None:
         table.add_row("JSON artifact", report.run_json_path or "—")
         table.add_row("Markdown artifact", report.run_md_path or "—")
     else:
+        if report.api_mode_preference:
+            table.add_row("API mode (preference)", report.api_mode_preference)
         if report.failure_reason:
             table.add_row("Failure reason", report.failure_reason)
         table.add_row("Error", report.error or "Unknown error")

@@ -52,6 +52,7 @@ def run_doctor(
     *,
     live: bool = False,
     http_probe: Callable[[str, float], tuple[bool, str]] | None = None,
+    runtime: RuntimeOptions | None = None,
 ) -> list[DoctorCheck]:
     checks: list[DoctorCheck] = []
     probe = http_probe or _default_http_probe
@@ -82,6 +83,7 @@ def run_doctor(
     )
 
     checks.extend(_credential_checks(settings))
+    checks.append(_api_mode_check(settings, runtime))
 
     if settings.llm_mode == "openai_compatible" and settings.llm_provider_name == "ollama":
         checks.append(_ollama_reachability_check(settings, probe))
@@ -95,7 +97,7 @@ def run_doctor(
         )
 
     if live:
-        checks.append(_live_provider_check(settings))
+        checks.append(_live_provider_check(settings, runtime=runtime))
     else:
         checks.append(
             DoctorCheck(
@@ -160,20 +162,46 @@ def _ollama_reachability_check(
     )
 
 
-def _live_provider_check(settings: Settings) -> DoctorCheck:
+def _api_mode_check(settings: Settings, runtime: RuntimeOptions | None) -> DoctorCheck:
+    if settings.llm_mode == "mock":
+        return DoctorCheck(
+            name="api_mode",
+            status=CheckStatus.SKIP,
+            message="Not applicable for mock mode.",
+        )
+    preference = runtime.api_mode if runtime is not None else "auto"
+    if settings.llm_mode == "openai_compatible" and settings.llm_provider_name == "ollama":
+        detail = (
+            f"preference={preference!r} (Ollama: auto tries Responses, falls back to chat completions)"
+        )
+    else:
+        detail = f"preference={preference!r} (auto tries Responses API, may fall back to chat)"
+    return DoctorCheck(name="api_mode", status=CheckStatus.OK, message=detail)
+
+
+def _live_provider_check(
+    settings: Settings,
+    *,
+    runtime: RuntimeOptions | None,
+) -> DoctorCheck:
     try:
-        provider = create_provider(settings, runtime=RuntimeOptions(timeout_seconds=10.0))
-        _ = provider.metadata
+        options = runtime or RuntimeOptions(timeout_seconds=10.0)
+        provider = create_provider(settings, runtime=options)
+        meta = provider.metadata
     except Exception as exc:  # noqa: BLE001
         return DoctorCheck(
             name="live",
             status=CheckStatus.FAIL,
             message=f"Provider initialization failed: {type(exc).__name__}",
         )
+    used = meta.api_mode_used or "not yet invoked"
     return DoctorCheck(
         name="live",
         status=CheckStatus.OK,
-        message="Provider initialized (no completion call made).",
+        message=(
+            f"Provider initialized (no completion call). "
+            f"api_mode preference={meta.api_mode_preference!r}, used={used!r}."
+        ),
     )
 
 
