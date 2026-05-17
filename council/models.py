@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from council.review_model import DecisionReview, default_review
+
 if TYPE_CHECKING:
     from council.decision_thread import DecisionThreadMeta
     from council.providers.models import ProviderMetadata, ProviderResponse
@@ -107,7 +109,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.8"
+RUN_SCHEMA_VERSION = "1.9"
 
 
 class RoleAssignmentRecord(BaseModel):
@@ -156,6 +158,10 @@ class CouncilRunResult(BaseModel):
     # Decision-thread linkage (Slice 5.8). Only present when this run was
     # produced with an explicit prior-decision context attached.
     decision_thread: "DecisionThreadMeta | None" = None
+    # Decision lifecycle + review metadata (Slice 5.9). New runs default to
+    # the `draft` state with an empty history; review CLI/chat commands and
+    # `council/review.py` mutate this in place.
+    review: DecisionReview = Field(default_factory=default_review)
 
     @property
     def provider_name(self) -> str:

@@ -57,6 +57,20 @@ from council.recovery import (
     is_provider_failure,
     is_recoverable_with_mock,
 )
+from council.review import (
+    ReviewTransitionError,
+    approve_run,
+    archive_run,
+    load_run_result as load_run_from_disk,
+    mark_revision_of,
+    reject_run,
+)
+from council.review_model import (
+    PACK_GATE_BLOCKED_REASON,
+    LifecycleState,
+    is_pack_allowed,
+    resolve_actor,
+)
 from council.council_session import (
     CouncilSessionRequest,
     CouncilSessionResult,
@@ -139,7 +153,8 @@ CHAT_HELP_LINES: tuple[str, ...] = (
     "/setup                       — interactive setup wizard",
     "/runs                        — list recent runs",
     "/show <run_id|last>          — inspect a saved run",
-    "/pack <run_id|last>          — generate implementation pack (requires approval)",
+    "/pack <run_id|last> [--allow-unapproved]",
+    "                             — generate implementation pack (approved runs only)",
     "/prompts                     — system prompt inventory",
     "/profile [name|list]         — show, list, or switch active config profile",
     "/status                      — active profile, routing, cached health, last run",
@@ -147,6 +162,11 @@ CHAT_HELP_LINES: tuple[str, ...] = (
     "/use <run_id>                — load a previous run as decision context",
     "/forget                      — clear active decision context and session memory",
     "/thread                      — show the linked decision chain for the current thread",
+    "/approve <run_id|last> [note]  — mark a decision approved",
+    "/reject  <run_id|last> <reason> — mark a decision rejected (reason required)",
+    "/revise  <run_id|last>          — start a contextual follow-up as a revision",
+    "/review  <run_id|last>          — show lifecycle state and review history",
+    "/archive <run_id|last> [note]   — archive a decision",
     "/help                        — show this help",
     "/exit                        — leave chat",
     "",
@@ -155,6 +175,14 @@ CHAT_HELP_LINES: tuple[str, ...] = (
 )
 
 FOLLOW_UP_PROMPT_TEMPLATE = "Use previous decision context from {run_id}? [Y/n]"
+APPROVE_NOW_PROMPT = "Approve now?"
+PACK_GATE_HINT_LINES: tuple[str, ...] = (
+    PACK_GATE_BLOCKED_REASON,
+    "Try one of:",
+    "  /approve last",
+    "  /review last",
+    "Or override with: /pack <run_id> --allow-unapproved",
+)
 
 
 def looks_like_shell_command(text: str) -> bool:
@@ -272,6 +300,44 @@ def _health_style(health: str) -> str:
         HEALTH_WARNING: "yellow",
         HEALTH_FAILED: "red",
     }.get(health, "dim")
+
+
+def _lifecycle_style(status: str) -> str:
+    """Rich style for a lifecycle label. Mirrors `cli._lifecycle_label`."""
+    return {
+        LifecycleState.DRAFT.value: "dim",
+        LifecycleState.UNDER_REVIEW.value: "yellow",
+        LifecycleState.APPROVED.value: "green",
+        LifecycleState.REJECTED.value: "red",
+        LifecycleState.SUPERSEDED.value: "magenta",
+        LifecycleState.ARCHIVED.value: "dim",
+    }.get(status, "white")
+
+
+def _thread_markers(item, *, thread_id: str) -> list[str]:
+    """Per-run markers for `/thread` (e.g. `[root] [revision] [approved]`).
+
+    Brackets are pre-escaped with a leading backslash so Rich panel rendering
+    prints them as literal characters instead of treating them as style tags.
+    """
+    markers: list[str] = []
+    markers.append(r"\[root]" if item.run_id == thread_id else r"\[child]")
+    if item.is_revision_of:
+        markers.append(r"\[revision]")
+    status = item.lifecycle_status
+    if status == LifecycleState.APPROVED.value:
+        markers.append(r"\[approved]")
+    elif status == LifecycleState.REJECTED.value:
+        markers.append(r"\[rejected]")
+    elif status == LifecycleState.SUPERSEDED.value:
+        markers.append(r"\[superseded]")
+    elif status == LifecycleState.ARCHIVED.value:
+        markers.append(r"\[archived]")
+    elif status == LifecycleState.UNDER_REVIEW.value:
+        markers.append(r"\[under_review]")
+    else:
+        markers.append(r"\[draft]")
+    return markers
 
 
 def _first_failing_message(checks: list[DoctorCheck]) -> str:
@@ -446,6 +512,11 @@ class ChatSession:
             "forget": lambda _a: self._cmd_forget(),
             "use": self._cmd_use,
             "thread": lambda _a: self._cmd_thread(),
+            "approve": self._cmd_approve,
+            "reject": self._cmd_reject,
+            "revise": self._cmd_revise,
+            "review": self._cmd_review,
+            "archive": self._cmd_archive,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -847,15 +918,30 @@ class ChatSession:
         return "continue"
 
     def _cmd_pack(self, args: str) -> Literal["continue", "exit"]:
-        run_id = resolve_run_id_arg(self.state, args)
+        tokens = args.split()
+        override = False
+        positional: list[str] = []
+        for token in tokens:
+            if token in ("--allow-unapproved", "--allow-unapproved-pack"):
+                override = True
+            else:
+                positional.append(token)
+        run_id = resolve_run_id_arg(self.state, " ".join(positional))
         if not run_id:
             self.error_console.print("No run ID. Run council first or pass /pack RUN_ID.", style="red")
+            return "continue"
+        try:
+            result = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+        except RunNotFoundError as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        if not is_pack_allowed(result.review, override=override):
+            self._print_pack_gate_hint()
             return "continue"
         if not self.confirm_fn("Generate implementation pack for this run?", False):
             self.console.print("[dim]Pack generation cancelled.[/dim]")
             return "continue"
         try:
-            result = load_run_result(self.ctx.settings.runs_dir, run_id)
             ensure_verdict_quality_for_pack(result.dossier)
             run_dir = self.ctx.settings.runs_dir / run_id
             paths = write_implementation_pack(run_dir, result)
@@ -864,6 +950,199 @@ class ChatSession:
                 self.console.print(f"  {path}")
         except VerdictQualityError as exc:
             render_known_error(self.error_console, exc, quiet=False)
+        return "continue"
+
+    def _print_pack_gate_hint(self) -> None:
+        body = "\n".join(PACK_GATE_HINT_LINES)
+        self.error_console.print(
+            Panel(body, title="Pack blocked", border_style="yellow")
+        )
+
+    # --- review lifecycle commands (Slice 5.9) -----------------------------
+
+    def _resolve_review_target(self, args: str) -> tuple[str | None, str]:
+        """Split `<run_id|last> [note...]` into (run_id, note).
+
+        Returns (None, '') and prints a usage error when no run is available.
+        """
+        parts = args.split(maxsplit=1)
+        run_id_token = parts[0] if parts else ""
+        note = parts[1].strip() if len(parts) > 1 else ""
+        run_id = resolve_run_id_arg(self.state, run_id_token)
+        if not run_id:
+            self.error_console.print(
+                "No run ID. Run council first or pass <run_id|last>.", style="red"
+            )
+            return None, ""
+        return run_id, note
+
+    def _cmd_approve(self, args: str) -> Literal["continue", "exit"]:
+        run_id, note = self._resolve_review_target(args)
+        if not run_id:
+            return "continue"
+        try:
+            updated = approve_run(
+                self.ctx.settings.runs_dir,
+                run_id,
+                actor=resolve_actor(),
+                note=note,
+            )
+        except (RunNotFoundError, ReviewTransitionError) as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        self.console.print(
+            f"[green]Approved[/green] {run_id} by [cyan]{updated.review.approved_by}[/cyan]."
+        )
+        parent = updated.review.is_revision_of
+        if parent:
+            self.console.print(
+                f"[magenta]Superseded parent[/magenta] {parent}."
+            )
+        return "continue"
+
+    def _cmd_reject(self, args: str) -> Literal["continue", "exit"]:
+        run_id, note = self._resolve_review_target(args)
+        if not run_id:
+            return "continue"
+        if not note:
+            self.error_console.print(
+                "A reason is required. Usage: /reject <run_id|last> <reason>", style="red"
+            )
+            return "continue"
+        try:
+            updated = reject_run(
+                self.ctx.settings.runs_dir,
+                run_id,
+                actor=resolve_actor(),
+                note=note,
+            )
+        except (RunNotFoundError, ReviewTransitionError) as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        self.console.print(
+            f"[red]Rejected[/red] {run_id} by [cyan]{updated.review.rejected_by}[/cyan]."
+        )
+        return "continue"
+
+    def _cmd_archive(self, args: str) -> Literal["continue", "exit"]:
+        run_id, note = self._resolve_review_target(args)
+        if not run_id:
+            return "continue"
+        try:
+            updated = archive_run(
+                self.ctx.settings.runs_dir,
+                run_id,
+                actor=resolve_actor(),
+                note=note,
+            )
+        except (RunNotFoundError, ReviewTransitionError) as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        self.console.print(
+            f"[dim]Archived[/dim] {run_id} (status: {updated.review.status.value})."
+        )
+        return "continue"
+
+    def _cmd_review(self, args: str) -> Literal["continue", "exit"]:
+        run_id, _ = self._resolve_review_target(args)
+        if not run_id:
+            return "continue"
+        try:
+            result = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+        except RunNotFoundError as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        review = result.review
+        thread = result.decision_thread
+        status_style = _lifecycle_style(review.status.value)
+        lines = [
+            f"Run ID    : [cyan]{run_id}[/cyan]",
+            f"Status    : [{status_style}]{review.status.value}[/{status_style}]",
+        ]
+        if review.approved_by:
+            lines.append(f"Approved  : {review.approved_by}")
+        if review.rejected_by:
+            lines.append(f"Rejected  : {review.rejected_by}")
+        if review.review_reason:
+            lines.append(f"Note      : {review.review_reason}")
+        if review.reviewed_at:
+            lines.append(
+                f"Reviewed  : {review.reviewed_at.strftime('%Y-%m-%d %H:%M:%SZ')}"
+            )
+        if review.is_revision_of:
+            lines.append(f"Revision of : [cyan]{review.is_revision_of}[/cyan]")
+        if review.superseded_by_run_id:
+            lines.append(
+                f"Superseded by: [cyan]{review.superseded_by_run_id}[/cyan]"
+            )
+        if thread is not None:
+            lines.append(f"Thread    : [cyan]{thread.thread_id}[/cyan]")
+            lines.append(f"Parent    : [cyan]{thread.parent_run_id}[/cyan]")
+        if review.history:
+            lines.append("")
+            lines.append("History:")
+            for event in review.history:
+                ts = event.timestamp.strftime("%Y-%m-%d %H:%M:%SZ")
+                note = f" — {event.note}" if event.note else ""
+                lines.append(f"  {ts}  {event.action.value} by {event.actor}{note}")
+        self.console.print(
+            Panel("\n".join(lines), title="Decision Review", border_style="blue")
+        )
+        return "continue"
+
+    def _cmd_revise(self, args: str) -> Literal["continue", "exit"]:
+        run_id, follow_up_question = self._resolve_review_target(args)
+        if not run_id:
+            return "continue"
+        try:
+            parent = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+        except RunNotFoundError as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        # Install the parent run as the active decision context so the next
+        # natural-language council run is automatically contextual.
+        parent_context = summarize_for_context(parent)
+        self.state.current_context = parent_context
+        self.state.current_context_run_id = parent.dossier.run_id
+        thread = parent.decision_thread
+        self.state.current_thread_id = (
+            thread.thread_id if thread is not None else parent.dossier.run_id
+        )
+        # If the user typed a question inline ("/revise last make it cheaper"),
+        # run it now and mark the new run as a revision of the parent.
+        if not follow_up_question:
+            self.console.print(
+                f"[green]Revision context loaded[/green] from [cyan]{parent.dossier.run_id}[/cyan]. "
+                "Type a follow-up question to run the revision."
+            )
+            return "continue"
+        if not self.confirm_fn("Run council on this revision?", True):
+            self.console.print("[dim]Revision cancelled.[/dim]")
+            return "continue"
+        try:
+            self._run_council(follow_up_question)
+        except KNOWN_PROJECT_ERRORS as exc:
+            self._handle_provider_failure(
+                exc,
+                retry=lambda: self._run_council(follow_up_question),
+            )
+            return "continue"
+        new_run_id = self.state.last_run_id
+        if new_run_id and new_run_id != parent.dossier.run_id:
+            try:
+                mark_revision_of(
+                    self.ctx.settings.runs_dir,
+                    new_run_id,
+                    parent.dossier.run_id,
+                    actor=resolve_actor(),
+                    note="Created via /revise.",
+                )
+                self.console.print(
+                    f"[cyan]Marked {new_run_id} as a revision of {parent.dossier.run_id}.[/cyan] "
+                    "Approve it to supersede the parent."
+                )
+            except (RunNotFoundError, ReviewTransitionError) as exc:
+                self.error_console.print(str(exc), style="red")
         return "continue"
 
     def _cmd_run(self, question: str) -> Literal["continue", "exit"]:
@@ -965,23 +1244,55 @@ class ChatSession:
                 plan=plan,
             )
 
-        pack_paths: list[Path] = []
-        if self.confirm_fn("Create implementation pack?", False):
-            ensure_verdict_quality_for_pack(session.result.dossier)
-            run_dir = self.ctx.settings.runs_dir / session.result.dossier.run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-            pack_paths = write_implementation_pack(run_dir, session.result)
-
-        _, md_path = save_run(
-            session.result,
-            settings=self.ctx.settings,
-            implementation_pack_paths=pack_paths or None,
-        )
-        self._record_session_memory(question, session.result, pack_paths)
+        # Decision starts as draft. Persist first so /approve has something
+        # to load from disk if the user accepts the inline approval prompt.
+        _, md_path = save_run(session.result, settings=self.ctx.settings)
+        self._record_session_memory(question, session.result, pack_paths=[])
         render_chat_verdict(self.console, session.result)
         self.console.print(f"[green]Saved:[/green] {md_path}")
+        self.console.print(
+            f"[dim]Decision state:[/dim] [{_lifecycle_style(LifecycleState.DRAFT.value)}]"
+            f"{LifecycleState.DRAFT.value}[/{_lifecycle_style(LifecycleState.DRAFT.value)}]"
+        )
+
+        approved = False
+        if self.confirm_fn(APPROVE_NOW_PROMPT, False):
+            try:
+                updated = approve_run(
+                    self.ctx.settings.runs_dir,
+                    session.result.dossier.run_id,
+                    actor=resolve_actor(),
+                    note="Approved inline after council run.",
+                )
+                approved = updated.review.status == LifecycleState.APPROVED
+                self.console.print(
+                    f"[green]Approved by[/green] [cyan]{updated.review.approved_by}[/cyan]."
+                )
+            except ReviewTransitionError as exc:
+                self.error_console.print(str(exc), style="red")
+            except KNOWN_PROJECT_ERRORS as exc:
+                self.error_console.print(str(exc), style="red")
+
+        pack_paths: list[Path] = []
+        if self.confirm_fn("Create implementation pack?", False):
+            if not approved:
+                self._print_pack_gate_hint()
+            else:
+                try:
+                    ensure_verdict_quality_for_pack(session.result.dossier)
+                    run_dir = self.ctx.settings.runs_dir / session.result.dossier.run_id
+                    run_dir.mkdir(parents=True, exist_ok=True)
+                    pack_paths = write_implementation_pack(run_dir, session.result)
+                    save_run(
+                        session.result,
+                        settings=self.ctx.settings,
+                        implementation_pack_paths=pack_paths or None,
+                    )
+                    self.console.print("[green]Implementation pack written.[/green]")
+                except VerdictQualityError as exc:
+                    render_known_error(self.error_console, exc, quiet=False)
         if pack_paths:
-            self.console.print("[green]Implementation pack written.[/green]")
+            self.state.last_pack_paths = list(pack_paths)
 
     # --- session memory + decision-thread helpers (Slice 5.8) ---------------
 
@@ -1121,10 +1432,10 @@ class ChatSession:
             return "continue"
         lines = [f"Thread ID: [cyan]{thread_id}[/cyan] ({len(runs)} run(s))"]
         for index, item in enumerate(runs, start=1):
-            marker = "root" if item.run_id == thread_id else "child"
+            markers = _thread_markers(item, thread_id=thread_id)
             preview = item.decision_preview[:60].replace("\n", " ")
             lines.append(
-                f" {index}. [{marker}] {item.run_id} — "
+                f" {index}. {' '.join(markers)} {item.run_id} — "
                 f"{item.timestamp.strftime('%Y-%m-%d %H:%M')} — {preview}"
             )
         self.console.print(

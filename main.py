@@ -284,6 +284,20 @@ def _council_command(args, console: Console, error_console: Console) -> int:
         if request.prompt_create_pack and not create_pack:
             create_pack = Confirm.ask("Create implementation pack?", default=False)
         if create_pack:
+            # Slice 5.9: gate pack on lifecycle approval unless overridden.
+            from council.review_model import is_pack_allowed
+
+            if not is_pack_allowed(
+                session.result.review,
+                override=request.allow_unapproved_pack,
+            ):
+                error_console.print(
+                    "Pack generation blocked: decision is not approved. "
+                    "Re-run with --allow-unapproved-pack, or approve via "
+                    "`uv run python main.py chat` (/approve <run_id>).",
+                    style="red",
+                )
+                return 1
             ensure_verdict_quality_for_pack(session.result.dossier)
             run_dir = settings.runs_dir / session.result.dossier.run_id
             run_dir.mkdir(parents=True, exist_ok=True)

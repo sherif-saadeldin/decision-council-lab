@@ -40,7 +40,7 @@ Copy `.env.example` to `.env` and configure as needed:
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
-## Chat mode (Slice 5.6 + 5.7 + 5.8)
+## Chat mode (Slice 5.6 + 5.7 + 5.8 + 5.9)
 
 Interactive CLI session — no TUI, no shell execution:
 
@@ -48,7 +48,7 @@ Interactive CLI session — no TUI, no shell execution:
 uv run python main.py chat
 ```
 
-Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
+Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/approve`, `/reject`, `/revise`, `/review`, `/archive`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
 
 ### Profile-aware doctor and recovery loop (Slice 5.7)
 
@@ -108,6 +108,48 @@ New commands:
 | `/thread` | List every run on the current thread, oldest first |
 
 `runs list` adds a `Thread` column; `runs show` adds `Thread:` and `Parent:` lines when present. Standalone runs render unchanged.
+
+### Decision review loop and approval lifecycle (Slice 5.9)
+
+Every council run is now a governed decision object with explicit lifecycle states: `draft`, `under_review`, `approved`, `rejected`, `superseded`, `archived`. New runs start in `draft`. Implementation packs are allowed only for approved runs (or with the explicit `--allow-unapproved-pack` / `--allow-unapproved` override).
+
+After a council run:
+
+```text
+Decision state: draft
+? Approve now? [y/N] y
+Approved by alice.
+? Create implementation pack? [y/N] y
+Implementation pack written.
+```
+
+If you decline the inline approval and then try to generate a pack, chat refuses with a recovery panel:
+
+```text
+┌── Pack blocked ──────────────────────────────────────┐
+│ Decision is not approved yet.                        │
+│ Try one of:                                          │
+│   /approve last                                      │
+│   /review last                                       │
+│ Or override with: /pack <run_id> --allow-unapproved  │
+└──────────────────────────────────────────────────────┘
+```
+
+New chat commands:
+
+| Command | Behavior |
+| --- | --- |
+| `/approve <run_id\|last> [note]` | Mark a decision approved (optional note becomes the review reason) |
+| `/reject  <run_id\|last> <reason>` | Mark a decision rejected — reason required |
+| `/revise  <run_id\|last> [follow-up question]` | Load the parent run as decision context. If a follow-up question is supplied, runs council inline and marks the new run as a revision of the parent |
+| `/review  <run_id\|last>` | Show lifecycle state, actors, timestamps, supersession links, and full audit history |
+| `/archive <run_id\|last> [note]` | Archive a decision (further review transitions are blocked until manually unarchived) |
+
+When a revision is approved, the parent automatically transitions to `superseded` and links forward via `superseded_by_run_id`. The full audit history (every transition, actor, timestamp, note) lives on `review.history` in `run.json` and as a `## Review Status` section in `run.md`.
+
+`runs list` shows a color-coded `Status` column (approved runs are prefixed with `[v]`); `runs show` adds `Status:` / `Revision of:` / `Superseded by:` lines when present. `/thread` annotates each entry with markers: `[root]`/`[child]` + `[revision]` (if applicable) + lifecycle marker (`[approved]`, `[superseded]`, etc.).
+
+The actor label is local-only (no auth): resolves from `DCOUNCIL_REVIEW_ACTOR` env var → `USER`/`USERNAME` → `local`. Set `DCOUNCIL_REVIEW_ACTOR` if you want a stable name across shell sessions.
 
 ## System prompts (Slice 5.5.2)
 

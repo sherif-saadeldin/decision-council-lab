@@ -356,6 +356,14 @@ def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Non-interactive: same as --create-pack (skip prompt).",
     )
+    parser.add_argument(
+        "--allow-unapproved-pack",
+        action="store_true",
+        help=(
+            "Allow pack generation for draft/un-approved decisions. "
+            "Default: packs require lifecycle status=approved (Slice 5.9)."
+        ),
+    )
     _add_repair_json_argument(parser)
     _add_api_mode_argument(parser)
     _add_system_profile_argument(parser)
@@ -541,6 +549,7 @@ def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
         prompt_create_pack=not bool(getattr(args, "yes_pack", False) or getattr(args, "create_pack", False)),
         runtime=runtime,
         base_settings=base,
+        allow_unapproved_pack=bool(getattr(args, "allow_unapproved_pack", False)),
     )
 
 
@@ -975,27 +984,28 @@ def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> No
     table.add_column("Kind", style="bold")
     table.add_column("Run ID")
     table.add_column("Time (UTC)")
+    table.add_column("Status")
     table.add_column("Question")
     table.add_column("Chair")
     table.add_column("Thread")
     for item in summaries:
         kind_style = "cyan" if item.run_kind == "council" else "dim"
         question = item.question.replace("\n", " ")
-        if len(question) > 48:
-            question = question[:47] + "…"
+        if len(question) > 44:
+            question = question[:43] + "…"
         chair = f"{item.chair_provider} / {item.chair_model}"
-        if len(chair) > 36:
-            chair = chair[:35] + "…"
-        # Thread column: short prefix of thread_id, or '—' for a root /
-        # standalone run. Helps the eye group continuations together.
+        if len(chair) > 32:
+            chair = chair[:31] + "…"
         if item.thread_id:
             thread_label = item.thread_id[:8] + "…"
         else:
             thread_label = "—"
+        status_label = _lifecycle_label(item.lifecycle_status)
         table.add_row(
             f"[{kind_style}]{item.run_kind}[/{kind_style}]",
             item.run_id,
             item.timestamp.strftime("%Y-%m-%d %H:%M"),
+            status_label,
             question or "—",
             chair,
             thread_label,
@@ -1004,6 +1014,24 @@ def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> No
     console.print(
         "\nInspect a run: [bold]uv run python main.py runs show RUN_ID[/bold]"
     )
+
+
+_LIFECYCLE_STYLES: dict[str, str] = {
+    "draft": "dim",
+    "under_review": "yellow",
+    "approved": "green",
+    "rejected": "red",
+    "superseded": "magenta",
+    "archived": "dim",
+}
+
+
+def _lifecycle_label(status: str) -> str:
+    """Color-coded short label for a lifecycle status. `approved` adds a
+    leading check mark so the eye finds approved runs quickly in /runs."""
+    style = _LIFECYCLE_STYLES.get(status, "white")
+    text = "[v] approved" if status == "approved" else status
+    return f"[{style}]{text}[/{style}]"
 
 
 def _run_artifact_path_lines(path: Path) -> tuple[str, str]:
@@ -1028,12 +1056,18 @@ def render_runs_show(console: Console, summary) -> None:
         thread_id = summary.thread_id or "—"
         parent = summary.parent_run_id or "—"
         thread_line = f"\nThread: [cyan]{thread_id}[/cyan]\nParent: [cyan]{parent}[/cyan]"
+    review_lines = f"\nStatus: {_lifecycle_label(summary.lifecycle_status)}"
+    if summary.is_revision_of:
+        review_lines += f"\nRevision of: [cyan]{summary.is_revision_of}[/cyan]"
+    if summary.superseded_by_run_id:
+        review_lines += f"\nSuperseded by: [cyan]{summary.superseded_by_run_id}[/cyan]"
     console.print(
         Panel.fit(
             f"Run ID: [cyan]{summary.run_id}[/cyan]\n"
             f"Kind: {summary.run_kind}\n"
             f"Time (UTC): {summary.timestamp.isoformat()}\n"
             f"Confidence: {confidence}"
+            f"{review_lines}"
             f"{thread_line}",
             title="Run Summary",
         )

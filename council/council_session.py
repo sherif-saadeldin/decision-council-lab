@@ -75,6 +75,8 @@ class CouncilSessionRequest:
     parent_context: DecisionContext | None = None
     parent_run_id: str | None = None
     thread_id: str | None = None
+    # Slice 5.9: bypass the lifecycle gate for pack generation.
+    allow_unapproved_pack: bool = False
 
 
 @dataclass(frozen=True)

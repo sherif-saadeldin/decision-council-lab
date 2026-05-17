@@ -207,11 +207,13 @@ def test_show_last_works(
     assert "run.md" in text
 
 
-def test_pack_last_requires_approval(
+def test_pack_last_blocked_until_approved(
     mock_settings: Settings,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Slice 5.9: a draft run cannot generate a pack — the chat-level
+    confirm should never even be reached."""
     monkeypatch.setattr("council.chat.load_config_file", lambda: None)
     settings = Settings(
         llm_mode="mock",
@@ -226,25 +228,29 @@ def test_pack_last_requires_approval(
 
     def confirm(message: str, default: bool) -> bool:
         confirms.append((message, default))
-        return False
+        return True
 
+    err = StringIO()
     session = ChatSession(
         console=Console(file=StringIO(), force_terminal=True, width=120),
-        error_console=Console(file=StringIO(), force_terminal=True, width=120),
+        error_console=Console(file=err, force_terminal=True, width=120),
         ctx=ctx,
         state=state,
         confirm_fn=confirm,
     )
     session.handle_line("/pack last")
-    assert confirms == [("Generate implementation pack for this run?", False)]
+    assert confirms == []  # blocked before reaching the chat confirm
     assert not (tmp_path / result.dossier.run_id / "mvp_scope.md").exists()
+    assert "Decision is not approved yet" in err.getvalue()
 
 
-def test_pack_last_writes_when_approved(
+def test_pack_last_writes_after_approval(
     mock_settings: Settings,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """After `/approve last`, `/pack last` may proceed when the chat user
+    confirms."""
     monkeypatch.setattr("council.chat.load_config_file", lambda: None)
     settings = Settings(
         llm_mode="mock",
@@ -262,7 +268,35 @@ def test_pack_last_writes_when_approved(
         state=state,
         confirm_fn=lambda _m, _d: True,
     )
+    session.handle_line("/approve last shipping for review")
     session.handle_line("/pack last")
+    assert (tmp_path / result.dossier.run_id / "mvp_scope.md").is_file()
+
+
+def test_pack_last_override_bypasses_lifecycle_gate(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/pack last --allow-unapproved` writes the pack even on a draft."""
+    monkeypatch.setattr("council.chat.load_config_file", lambda: None)
+    settings = Settings(
+        llm_mode="mock",
+        runs_dir=tmp_path,
+        mock_model="mock-council-v1",
+    )
+    result = _mock_council_result()
+    save_run(result, settings=settings)
+    ctx = build_chat_context(settings, system_profile="default", config_profile_name=None)
+    state = ChatSessionState(last_run_id=result.dossier.run_id)
+    session = ChatSession(
+        console=Console(file=StringIO(), force_terminal=True, width=120),
+        error_console=Console(file=StringIO(), force_terminal=True, width=120),
+        ctx=ctx,
+        state=state,
+        confirm_fn=lambda _m, _d: True,
+    )
+    session.handle_line("/pack last --allow-unapproved")
     assert (tmp_path / result.dossier.run_id / "mvp_scope.md").is_file()
 
 

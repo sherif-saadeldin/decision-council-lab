@@ -31,7 +31,7 @@ def test_markdown_includes_chair_judgment_fields(mock_settings: Settings) -> Non
 def test_schema_version_is_current(mock_settings: Settings) -> None:
     result, _ = run_council("Test schema version?", settings=mock_settings)
     assert result.schema_version == RUN_SCHEMA_VERSION
-    assert RUN_SCHEMA_VERSION == "1.8"
+    assert RUN_SCHEMA_VERSION == "1.9"
 
 
 def test_prompt_debug_off_by_default(tmp_path: Path) -> None:

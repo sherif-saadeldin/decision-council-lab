@@ -27,6 +27,12 @@ class RunSummary:
     confidence_score: float | None
     parent_run_id: str | None = None
     thread_id: str | None = None
+    # Lifecycle metadata (Slice 5.9). Defaults to "draft" for runs saved
+    # without an explicit review block; legacy runs (pre-1.9) still
+    # surface as draft.
+    lifecycle_status: str = "draft"
+    is_revision_of: str | None = None
+    superseded_by_run_id: str | None = None
 
 
 def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
@@ -81,6 +87,24 @@ def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
         else None
     )
 
+    review_block = payload.get("review") or {}
+    if isinstance(review_block, dict):
+        lifecycle_status = str(review_block.get("status") or "draft")
+        is_revision_of = (
+            str(review_block.get("is_revision_of"))
+            if review_block.get("is_revision_of")
+            else None
+        )
+        superseded_by = (
+            str(review_block.get("superseded_by_run_id"))
+            if review_block.get("superseded_by_run_id")
+            else None
+        )
+    else:
+        lifecycle_status = "draft"
+        is_revision_of = None
+        superseded_by = None
+
     return RunSummary(
         run_id=run_id,
         timestamp=timestamp,
@@ -94,6 +118,9 @@ def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
         confidence_score=confidence_score,
         parent_run_id=parent_run_id,
         thread_id=thread_id,
+        lifecycle_status=lifecycle_status,
+        is_revision_of=is_revision_of,
+        superseded_by_run_id=superseded_by,
     )
 
 

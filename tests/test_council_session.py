@@ -119,6 +119,8 @@ def test_implementation_pack_created_only_when_requested(tmp_path: Path) -> None
 
 
 def test_main_council_multi_mock(capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Council CLI with `--yes-pack` now also needs `--allow-unapproved-pack`
+    (Slice 5.9) because newly minted runs default to draft state."""
     monkeypatch.chdir(tmp_path)
     code = main(
         [
@@ -134,6 +136,7 @@ def test_main_council_multi_mock(capsys, tmp_path: Path, monkeypatch: pytest.Mon
             "--debate-rounds",
             "0",
             "--yes-pack",
+            "--allow-unapproved-pack",
         ]
     )
     assert code == 0

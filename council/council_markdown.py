@@ -20,6 +20,42 @@ def _question_title(question: str, *, max_len: int = 80) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _format_review_section(lines: list[str], result: CouncilRunResult) -> None:
+    review = result.review
+    if review is None:
+        return
+    status_label = review.status.value
+    lines.extend(
+        [
+            "",
+            "## Review Status",
+            "",
+            f"- **Lifecycle state:** `{status_label}`",
+        ]
+    )
+    if review.approved_by:
+        lines.append(f"- **Approved by:** {review.approved_by}")
+    if review.rejected_by:
+        lines.append(f"- **Rejected by:** {review.rejected_by}")
+    if review.review_reason:
+        lines.append(f"- **Review note:** {review.review_reason}")
+    if review.reviewed_at:
+        lines.append(f"- **Reviewed at (UTC):** {review.reviewed_at.isoformat()}")
+    if review.superseded_by_run_id:
+        lines.append(f"- **Superseded by:** `{review.superseded_by_run_id}`")
+    if review.is_revision_of:
+        lines.append(f"- **Revision of:** `{review.is_revision_of}`")
+    if review.history:
+        lines.append("")
+        lines.append("**Review history**")
+        lines.append("")
+        for event in review.history:
+            ts = event.timestamp.strftime("%Y-%m-%d %H:%M:%SZ")
+            note = f" — {event.note}" if event.note else ""
+            lines.append(f"- `{ts}` {event.action.value} by {event.actor}{note}")
+    lines.append("")
+
+
 def _format_thread_section(lines: list[str], result: CouncilRunResult) -> None:
     thread = result.decision_thread
     if thread is None:
@@ -224,6 +260,7 @@ def format_council_run_markdown(
         dossier.decision_question,
     ]
 
+    _format_review_section(lines, result)
     _format_thread_section(lines, result)
     _format_cost_estimate_markdown(lines, result)
 

@@ -57,7 +57,7 @@ def test_json_includes_debate_transcript(mock_settings: Settings) -> None:
     json_path, _ = save_run(result, settings=mock_settings)
     payload = json.loads(json_path.read_text(encoding="utf-8"))
 
-    assert payload["schema_version"] == "1.8"
+    assert payload["schema_version"] == "1.9"
     assert payload["debate_transcript"] is not None
     assert payload["debate_transcript"]["rounds_completed"] == 2
 
@@ -65,7 +65,7 @@ def test_json_includes_debate_transcript(mock_settings: Settings) -> None:
 def test_schema_version_is_current(mock_settings: Settings) -> None:
     result, _ = run_council("Schema check?", settings=mock_settings)
     assert result.schema_version == RUN_SCHEMA_VERSION
-    assert RUN_SCHEMA_VERSION == "1.8"
+    assert RUN_SCHEMA_VERSION == "1.9"
 
 
 def test_debate_positions_cite_agent_briefs(mock_settings: Settings) -> None:

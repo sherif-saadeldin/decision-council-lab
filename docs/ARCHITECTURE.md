@@ -92,6 +92,20 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 `council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
 
+### Decision review loop & approval lifecycle (Slice 5.9)
+
+Council runs are now governed decision objects with explicit lifecycle states. Three layers:
+
+1. **Model — `council/review_model.py`.** Pure types: `LifecycleState` enum (`draft`, `under_review`, `approved`, `rejected`, `superseded`, `archived`), `ReviewAction` enum for audit history, `ReviewEvent`, and `DecisionReview` (status + actor fields + history list). Helpers: `default_review()` (a fresh draft block), `resolve_actor(explicit)` (free-text local username; pulls from `DCOUNCIL_REVIEW_ACTOR` → `USER` → `USERNAME` → `local` — no auth system), `is_pack_allowed(review, override)`.
+
+2. **Storage — `council/review.py`.** Atomic load + mutate + re-render on `runs/<id>/run.json` and `run.md`. Functions: `approve_run`, `reject_run` (reason required), `archive_run`, `mark_revision_of(child, parent)`, `load_run_result`. Approving a run whose `review.is_revision_of` is set automatically transitions the parent to `superseded` and records the forward link in `superseded_by_run_id`. Archive is a soft block: further transitions raise `ReviewTransitionError`.
+
+3. **Surfaces — `council/chat.py`, `council/cli.py`, `council/council_markdown.py`, `council/run_catalog.py`.** New chat commands `/approve`, `/reject`, `/revise`, `/review`, `/archive`. `/pack` and the council CLI gate on `is_pack_allowed`; the override flag is `--allow-unapproved-pack` (CLI) / `/pack last --allow-unapproved` (chat). `/runs` adds a `Status` column with color-coded labels (`approved` gets a `[v]` prefix); `/runs show` adds `Status:` / `Revision of:` / `Superseded by:`. Council markdown gains a `## Review Status` section with status, actors, timestamps, supersession links, and full audit history. `/thread` annotates each entry with `\[root]`/`\[child]` + `\[revision]` + lifecycle marker (`\[approved]`, `\[superseded]`, etc.).
+
+After a council run, chat prints `Decision state: draft`, then asks `Approve now? [y/N]`. If accepted, the inline approval flows into the existing `Create implementation pack?` prompt — pack generation is allowed only after approval (or with the explicit override).
+
+`RUN_SCHEMA_VERSION` bumped to **1.9**. `CouncilRunResult.review: DecisionReview` defaults to a draft block; legacy runs (pre-1.9 on disk) surface as `draft` via the run catalog fallback.
+
 ### Decision threads & contextual follow-ups (Slice 5.8)
 
 Chat is now a continuous decision workspace. Three layers:
@@ -303,7 +317,7 @@ Configuration errors:
 
 ## Run artifacts
 
-- `schema_version` **1.8** on `CouncilRunResult` (1.8 added `decision_thread` for Slice 5.8)
+- `schema_version` **1.9** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review` for Slice 5.9)
 - `debate_transcript` when `--debate-rounds` > 0
 - optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON
