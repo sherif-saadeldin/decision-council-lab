@@ -147,6 +147,43 @@ def test_main_council_multi_mock(capsys, tmp_path: Path, monkeypatch: pytest.Mon
     assert (run_dir / "implementation_plan.md").exists()
 
 
+def test_main_council_quiet_does_not_prompt_for_pack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: in --quiet / non-TTY mode the council CLI must NOT call
+    rich.Confirm.ask, which would raise EOFError when piped or scripted.
+    """
+    monkeypatch.chdir(tmp_path)
+    import rich.prompt
+
+    def fail(*_a: object, **_k: object) -> bool:  # pragma: no cover - guard
+        raise AssertionError("Confirm.ask called in --quiet mode")
+
+    monkeypatch.setattr(rich.prompt.Confirm, "ask", classmethod(fail))
+    code = main(
+        [
+            "council",
+            "Quiet pack prompt?",
+            "--council-presets",
+            "mock,mock,mock,mock,mock,mock",
+            "--routing-mode",
+            "manual",
+            "--runs-dir",
+            str(tmp_path),
+            "--quiet",
+            "--debate-rounds",
+            "0",
+        ]
+    )
+    assert code == 0
+    runs = list(tmp_path.iterdir())
+    assert runs
+    # No pack should have been generated.
+    run_dir = runs[0]
+    assert not (run_dir / "implementation_plan.md").exists()
+
+
 def test_build_council_request_role_presets() -> None:
     args = parse_args(
         [

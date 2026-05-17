@@ -282,7 +282,15 @@ def _council_command(args, console: Console, error_console: Console) -> int:
         pack_paths: list[Path] = []
         create_pack = request.create_pack
         if request.prompt_create_pack and not create_pack:
-            create_pack = Confirm.ask("Create implementation pack?", default=False)
+            # Skip the interactive prompt in non-TTY or --quiet runs so piped
+            # invocations (CI, scripts) don't crash with EOFError. Users who
+            # want a pack non-interactively pass --create-pack or --yes-pack.
+            import sys as _sys
+
+            if bool(getattr(args, "quiet", False)) or not _sys.stdin.isatty():
+                create_pack = False
+            else:
+                create_pack = Confirm.ask("Create implementation pack?", default=False)
         if create_pack:
             # Slice 5.9: gate pack on lifecycle approval unless overridden.
             from council.review_model import is_pack_allowed
