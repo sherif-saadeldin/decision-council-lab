@@ -20,6 +20,7 @@ from council.cli import (
     render_config_use,
     render_doctor,
     render_known_error,
+    render_review,
     render_runs_list,
     render_runs_show,
     render_preset_list,
@@ -121,9 +122,21 @@ def main(argv: list[str] | None = None) -> int:
     if command == "chat":
         return _chat_command(args, console, error_console)
 
+    # Slice 5.10: lifecycle verbs reachable from CI / scripts.
+    if command == "approve":
+        return _approve_command(args, console, error_console)
+    if command == "reject":
+        return _reject_command(args, console, error_console)
+    if command == "archive":
+        return _archive_command(args, console, error_console)
+    if command == "review":
+        return _review_command(args, console, error_console)
+    if command == "pack":
+        return _pack_command(args, console, error_console)
+
     error_console.print(
         "Unknown command. Use: run, council, chat, runs, compare, smoke, setup, presets, "
-        "prompts, doctor, version, config, secrets.",
+        "prompts, doctor, version, config, secrets, approve, reject, archive, review, pack.",
         style="red",
     )
     return 1
@@ -429,6 +442,141 @@ def _config_command(args, console: Console, error_console: Console) -> int:
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=False)
         return 1
+
+
+# --- Slice 5.10: lifecycle CLI verbs -------------------------------------
+
+
+def _resolve_review_runs_dir(args) -> Path:
+    """Same runs_dir resolution as `runs show` so verbs share one source."""
+    return resolve_runs_dir(args)
+
+
+def _approve_command(args, console: Console, error_console: Console) -> int:
+    from council.review import approve_run
+
+    try:
+        runs_dir = _resolve_review_runs_dir(args)
+        result = approve_run(
+            runs_dir,
+            args.run_id.strip(),
+            actor=getattr(args, "actor", None),
+            note=getattr(args, "note", "") or "",
+        )
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    console.print(
+        f"[green]Approved[/green] {args.run_id} by [cyan]{result.review.approved_by}[/cyan]."
+    )
+    parent = result.review.is_revision_of
+    if parent:
+        console.print(f"[magenta]Superseded parent[/magenta] {parent}.")
+    return 0
+
+
+def _reject_command(args, console: Console, error_console: Console) -> int:
+    from council.review import reject_run
+
+    try:
+        runs_dir = _resolve_review_runs_dir(args)
+        result = reject_run(
+            runs_dir,
+            args.run_id.strip(),
+            actor=getattr(args, "actor", None),
+            note=args.reason,
+        )
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    console.print(
+        f"[red]Rejected[/red] {args.run_id} by [cyan]{result.review.rejected_by}[/cyan]."
+    )
+    return 0
+
+
+def _archive_command(args, console: Console, error_console: Console) -> int:
+    from council.review import archive_run
+
+    try:
+        runs_dir = _resolve_review_runs_dir(args)
+        result = archive_run(
+            runs_dir,
+            args.run_id.strip(),
+            actor=getattr(args, "actor", None),
+            note=getattr(args, "note", "") or "",
+        )
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    console.print(
+        f"[dim]Archived[/dim] {args.run_id} (status: {result.review.status.value})."
+    )
+    return 0
+
+
+def _review_command(args, console: Console, error_console: Console) -> int:
+    from council.review import load_run_result as _load_result
+
+    try:
+        runs_dir = _resolve_review_runs_dir(args)
+        run_id = args.run_id.strip()
+        result = _load_result(runs_dir, run_id)
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    render_review(console, run_id, result)
+    return 0
+
+
+def _pack_command(args, console: Console, error_console: Console) -> int:
+    """Generate the implementation pack for an already-saved run."""
+    from council.review import load_run_result as _load_result
+    from council.review_model import PACK_GATE_BLOCKED_REASON, is_pack_allowed
+
+    try:
+        runs_dir = _resolve_review_runs_dir(args)
+        run_id = args.run_id.strip()
+        result = _load_result(runs_dir, run_id)
+    except RunNotFoundError as exc:
+        error_console.print(str(exc), style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    override = bool(getattr(args, "allow_unapproved", False))
+    if not is_pack_allowed(result.review, override=override):
+        error_console.print(
+            f"{PACK_GATE_BLOCKED_REASON} "
+            f"Run `uv run python main.py approve {run_id}` first, "
+            "or re-run pack with --allow-unapproved.",
+            style="red",
+        )
+        return 1
+    try:
+        ensure_verdict_quality_for_pack(result.dossier)
+        run_dir = runs_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        paths = write_implementation_pack(run_dir, result)
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+    console.print("[green]Implementation pack:[/green]")
+    for path in paths:
+        console.print(f"  {path}", highlight=False, markup=False)
+    return 0
 
 
 if __name__ == "__main__":

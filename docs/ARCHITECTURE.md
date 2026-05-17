@@ -92,6 +92,24 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 `council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
 
+### CLI surface for the review lifecycle (Slice 5.10)
+
+Slice 5.9 wired the lifecycle into the chat slash verbs. Slice 5.10 lifts every verb to a first-class `main.py` subcommand so CI, scripts, cron, and other coding tools can govern decisions without an interactive chat session.
+
+| Subcommand | Mirrors chat | Flags |
+| --- | --- | --- |
+| `approve <run_id>` | `/approve` | `--note "..."`, `--actor NAME`, `--runs-dir PATH` |
+| `reject <run_id>` | `/reject` | `--reason "..."` (required), `--actor NAME`, `--runs-dir PATH` |
+| `archive <run_id>` | `/archive` | `--note "..."`, `--actor NAME`, `--runs-dir PATH` |
+| `review <run_id>` | `/review` | `--runs-dir PATH` |
+| `pack <run_id>` | `/pack` | `--allow-unapproved`, `--runs-dir PATH` |
+
+All five reuse `council/review.py` directly — no new business logic, just thin dispatchers in `main.py` plus a `render_review(console, run_id, result)` helper in `council/cli.py` that mirrors the chat panel byte-for-byte.
+
+Actor resolution is the same as Slice 5.9: `--actor` flag → `DCOUNCIL_REVIEW_ACTOR` env → `USER` / `USERNAME` → `local`. Approving a run whose `is_revision_of` is set still triggers automatic parent supersession; archived runs still refuse further transitions; `pack` honors the same gate as the chat surface (and the same `--allow-unapproved` override). `reject` requires `--reason` at the argparse level so omitting it fails fast with `exit 2`.
+
+Side effect: `main.py "Q"` legacy positional question still routes to `run` — the new verbs were added to `CLI_COMMANDS` so `normalize_argv` recognises them and doesn't capture their first argument as a question.
+
 ### Decision review loop & approval lifecycle (Slice 5.9)
 
 Council runs are now governed decision objects with explicit lifecycle states. Three layers:

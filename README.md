@@ -151,6 +151,48 @@ When a revision is approved, the parent automatically transitions to `superseded
 
 The actor label is local-only (no auth): resolves from `DCOUNCIL_REVIEW_ACTOR` env var → `USER`/`USERNAME` → `local`. Set `DCOUNCIL_REVIEW_ACTOR` if you want a stable name across shell sessions.
 
+### CLI lifecycle commands (Slice 5.10)
+
+Every chat lifecycle verb is now also a `main.py` subcommand for CI / scripts / cron — no interactive chat required:
+
+```bash
+uv run python main.py approve <run_id> --note "shipping" --actor alice
+uv run python main.py reject  <run_id> --reason "scope too broad" --actor bob
+uv run python main.py archive <run_id> --note "EOL"
+uv run python main.py review  <run_id>
+uv run python main.py pack    <run_id>                  # blocked on draft
+uv run python main.py pack    <run_id> --allow-unapproved
+```
+
+All five reuse `council/review.py` directly. `reject` requires `--reason`. `--actor` falls back to `DCOUNCIL_REVIEW_ACTOR` / `USER` / `USERNAME` / `local`. Approving a revision still auto-supersedes the parent. `archive` blocks further transitions. `pack` honors the lifecycle gate exactly like chat's `/pack`.
+
+Sample lifecycle:
+
+```bash
+$ uv run python main.py council "Should we ship?" --council-presets mock,mock,mock,mock,mock,mock --routing-mode manual --debate-rounds 0 --quiet
+runs/<id>/run.json
+runs/<id>/run.md
+uv run python main.py runs show <id>
+
+$ uv run python main.py review <id>
++-- Decision Review --+
+| Status : draft      |
++---------------------+
+
+$ uv run python main.py pack <id>
+Decision is not approved yet. Run `uv run python main.py approve <id>` first,
+or re-run pack with --allow-unapproved.
+
+$ uv run python main.py approve <id> --note "shipping" --actor alice
+Approved <id> by alice.
+
+$ uv run python main.py pack <id>
+Implementation pack:
+  runs/<id>/mvp_scope.md
+  runs/<id>/implementation_plan.md
+  ...
+```
+
 ## System prompts (Slice 5.5.2)
 
 Role identity lives in `council/system_prompts/` (`base.md` + per-role files). Profiles in `council/system_profiles/` map roles to files (only `default` today). JSON schemas and evidence guardrails stay in code (`council/prompts.py`).

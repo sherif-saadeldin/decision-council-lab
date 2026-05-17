@@ -98,6 +98,13 @@ CLI_COMMANDS = frozenset(
         "runs",
         "prompts",
         "chat",
+        # Slice 5.10: lifecycle verbs reachable from CI / scripts without
+        # requiring an interactive chat session.
+        "approve",
+        "reject",
+        "archive",
+        "review",
+        "pack",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -237,7 +244,81 @@ def build_parser() -> argparse.ArgumentParser:
     _add_profile_argument(chat_parser)
     _add_system_profile_argument(chat_parser)
 
+    # Slice 5.10: lifecycle verbs as first-class subcommands. Mirror the
+    # chat slash vocabulary (/approve, /reject, /archive, /review, /pack)
+    # so users learn one set of names.
+    approve_parser = subparsers.add_parser(
+        "approve",
+        help="Mark a saved council run as approved.",
+    )
+    approve_parser.add_argument("run_id", help="Run ID to approve.")
+    approve_parser.add_argument(
+        "--note",
+        default="",
+        help="Optional review note recorded with the approval.",
+    )
+    _add_actor_argument(approve_parser)
+    _add_runs_dir_argument(approve_parser)
+
+    reject_parser = subparsers.add_parser(
+        "reject",
+        help="Mark a saved council run as rejected (reason required).",
+    )
+    reject_parser.add_argument("run_id", help="Run ID to reject.")
+    reject_parser.add_argument(
+        "--reason",
+        required=True,
+        help="Required reason recorded with the rejection.",
+    )
+    _add_actor_argument(reject_parser)
+    _add_runs_dir_argument(reject_parser)
+
+    archive_parser = subparsers.add_parser(
+        "archive",
+        help="Archive a saved council run (blocks further review transitions).",
+    )
+    archive_parser.add_argument("run_id", help="Run ID to archive.")
+    archive_parser.add_argument(
+        "--note",
+        default="",
+        help="Optional note recorded with the archival event.",
+    )
+    _add_actor_argument(archive_parser)
+    _add_runs_dir_argument(archive_parser)
+
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Show lifecycle state, review actors, and audit history for a run.",
+    )
+    review_parser.add_argument("run_id", help="Run ID to inspect.")
+    _add_runs_dir_argument(review_parser)
+
+    pack_parser = subparsers.add_parser(
+        "pack",
+        help="Generate the implementation pack for an approved run.",
+    )
+    pack_parser.add_argument("run_id", help="Run ID to generate a pack for.")
+    pack_parser.add_argument(
+        "--allow-unapproved",
+        action="store_true",
+        dest="allow_unapproved",
+        help="Bypass the lifecycle gate and generate a pack on a draft run.",
+    )
+    _add_runs_dir_argument(pack_parser)
+
     return parser
+
+
+def _add_actor_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--actor",
+        metavar="NAME",
+        default=None,
+        help=(
+            "Actor label recorded in the review audit history. "
+            "Falls back to DCOUNCIL_REVIEW_ACTOR / USER / USERNAME / 'local'."
+        ),
+    )
 
 
 def _add_council_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1032,6 +1113,49 @@ def _lifecycle_label(status: str) -> str:
     style = _LIFECYCLE_STYLES.get(status, "white")
     text = "[v] approved" if status == "approved" else status
     return f"[{style}]{text}[/{style}]"
+
+
+def render_review(console: Console, run_id: str, result) -> None:
+    """Render the lifecycle-state panel for `review` (CLI) — mirrors the
+    chat `/review` panel so the two surfaces look identical."""
+    review = result.review
+    thread = getattr(result, "decision_thread", None)
+    status_style = _LIFECYCLE_STYLES.get(review.status.value, "white")
+    lines = [
+        f"Run ID    : [cyan]{run_id}[/cyan]",
+        f"Status    : [{status_style}]{review.status.value}[/{status_style}]",
+    ]
+    if review.approved_by:
+        lines.append(f"Approved  : {review.approved_by}")
+    if review.rejected_by:
+        lines.append(f"Rejected  : {review.rejected_by}")
+    if review.review_reason:
+        lines.append(f"Note      : {review.review_reason}")
+    if review.reviewed_at:
+        lines.append(
+            f"Reviewed  : {review.reviewed_at.strftime('%Y-%m-%d %H:%M:%SZ')}"
+        )
+    if review.is_revision_of:
+        lines.append(f"Revision of : [cyan]{review.is_revision_of}[/cyan]")
+    if review.superseded_by_run_id:
+        lines.append(
+            f"Superseded by: [cyan]{review.superseded_by_run_id}[/cyan]"
+        )
+    if thread is not None:
+        lines.append(f"Thread    : [cyan]{thread.thread_id}[/cyan]")
+        lines.append(f"Parent    : [cyan]{thread.parent_run_id}[/cyan]")
+    if review.history:
+        lines.append("")
+        lines.append("History:")
+        for event in review.history:
+            ts = event.timestamp.strftime("%Y-%m-%d %H:%M:%SZ")
+            note = f" — {event.note}" if event.note else ""
+            lines.append(
+                f"  {ts}  {event.action.value} by {event.actor}{note}"
+            )
+    console.print(
+        Panel("\n".join(lines), title="Decision Review", border_style="blue")
+    )
 
 
 def _run_artifact_path_lines(path: Path) -> tuple[str, str]:
