@@ -11,6 +11,7 @@ from council.decision_thread import (
     DecisionThreadMeta,
     compose_question_with_context,
 )
+from council.intake import DecisionIntake, compose_question_with_intake
 from council.provider_availability import (
     build_preset_availability_for_routing,
     validate_hosted_presets_live,
@@ -77,6 +78,9 @@ class CouncilSessionRequest:
     thread_id: str | None = None
     # Slice 5.9: bypass the lifecycle gate for pack generation.
     allow_unapproved_pack: bool = False
+    # Slice 6.0: structured intake collected via guided chat. Prepended to
+    # the chair question and persisted as `intake` on CouncilRunResult.
+    intake: DecisionIntake | None = None
 
 
 @dataclass(frozen=True)
@@ -154,10 +158,14 @@ def run_council_session(
     run_started = time.perf_counter()
     debug_collector = PromptDebugCollector()
     raw_question = request.question.strip()
+    question = raw_question
+    # Compose order: intake first (foundational situation), then
+    # parent_context (prior decision linkage), then the question itself.
+    # Both helpers are deterministic so the chair prompt is stable.
+    if request.intake is not None:
+        question = compose_question_with_intake(question, request.intake)
     if request.parent_context is not None:
-        question = compose_question_with_context(raw_question, request.parent_context)
-    else:
-        question = raw_question
+        question = compose_question_with_context(question, request.parent_context)
 
     with system_profile_context(runtime.system_profile):
         return _run_council_session_inner(
@@ -281,6 +289,7 @@ def _run_council_session_inner(
             routing_mode=request.routing_mode,
             cost_estimate=_cost_record(cost_estimate),
             decision_thread=decision_thread,
+            intake=request.intake,
         ),
         system_profile=runtime.system_profile,
     )

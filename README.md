@@ -40,7 +40,7 @@ Copy `.env.example` to `.env` and configure as needed:
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
-## Chat mode (Slice 5.6 + 5.7 + 5.8 + 5.9)
+## Chat mode (Slice 5.6 through 6.0)
 
 Interactive CLI session — no TUI, no shell execution:
 
@@ -48,7 +48,96 @@ Interactive CLI session — no TUI, no shell execution:
 uv run python main.py chat
 ```
 
-Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/approve`, `/reject`, `/revise`, `/review`, `/archive`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
+**The conversation is the product. The council is the engine.** Type naturally. Chat opens a guided intake (goal → mode → context → constraints → success → risks), confirms a summary, then runs the council. Results come back human-first: direct answer + three reasons + biggest warning + next step. The full panel is one keystroke away.
+
+Slash commands: `/intake`, `/edit`, `/clear-intake`, `/mode`, `/summary`, `/council` (skip intake), `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/approve`, `/reject`, `/revise`, `/review`, `/archive`, `/help`, `/exit`. `/council Q` is the power-user bypass that skips the intake conversation entirely.
+
+### Guided decision conversation (Slice 6.0)
+
+Example session:
+
+```text
+chat> I want to build an AI movie startup.
+[dim]Let's think this through together. I'll ask a few quick questions,
+summarize what I heard, then run the council.[/dim]
+Goal noted: I want to build an AI movie startup.
+How should I help you think? (number or name)
+  1. Fast answer — Quick verdict. No debate rounds. Lean on local/free presets.
+  2. Deep analysis — Multi-model debate. Balanced council; widest perspective.
+  3. Pressure test — Stress-test assumptions. Skeptic and risk roles weighted heavier.
+  4. Build plan — Concrete next steps. Operator role guides scope and sequencing.
+  5. Risk review — Surfaces failure modes and kill criteria. Risk-led.
+  6. Execution roadmap — Operator + implementation focus. Encourages pack generation.
+
+chat> 3
+What's the relevant context — team, market, stage?
+
+chat> Solo founder, $50k runway, no prior film experience.
+What are your main constraints? Think time, money, legal, skills, ...
+
+chat> time, money, solo, no domain network
+What does success look like 3–6 months from now?
+
+chat> One paying customer or one partnership LOI.
+What's the biggest risk or fear you have about this?
+
+chat> Burnout chasing a market I don't understand.
+Anything else I should know? (Press Enter to skip.)
+
+chat>
++-- Decision intake --------------------------+
+| Here's my understanding:                    |
+|                                             |
+| Goal              : I want to build an AI...|
+| Mode              : Pressure test           |
+| Context           : Solo founder, $50k ...  |
+| Constraints       :                         |
+|   - time                                    |
+|   - money                                   |
+|   - solo                                    |
+|   - no domain network                       |
+| Success criteria  : One paying customer ... |
+| Biggest risk      :                         |
+|   - Burnout chasing a market I don't ...    |
++---------------------------------------------+
+Run council with this context? [Y/n] y
+Using guided intake context (goal, constraints, mode).
+... council runs (chair prompt carries the structured intake block) ...
+
++-- Direct Answer ----------------------------+
+| Proceed with constraints — validate on a    |
+| 30-day paid pilot before any equity moves.  |
+|                                             |
+| Why:                                        |
+|   • Domain-network gap is the deciding fact |
+|   • Solo+runway combo favors learning over  |
+|     scaling                                 |
+|   • A paid pilot turns the risk into a     |
+|     bounded experiment                      |
+|                                             |
+| Biggest warning: Don't pre-commit equity ...|
+| Next step: Land one paid pilot conversation |
+|                                             |
+| Run ID: <run-id>                            |
++---------------------------------------------+
+Show full council breakdown? [y/N] n
+Decision state: draft
+Approve now? [y/N] n
+Create implementation pack? [y/N] n
+```
+
+Decision modes map to existing routing knobs:
+
+| Mode | Routing | Debate | Council emphasis |
+| --- | --- | --- | --- |
+| Fast answer | economy | 0 | Cheapest viable chair, no debate |
+| Deep analysis | balanced | 2 | Full council, multi-model debate |
+| Pressure test | balanced | 2 | Skeptic + risk emphasized |
+| Build plan | balanced | 1 | Operator emphasized |
+| Risk review | balanced | 1 | Risk-led, kill criteria heavy |
+| Execution roadmap | balanced | 1 | Operator + implementation focus |
+
+Intake fields persist on `CouncilRunResult.intake` (schema 1.10). `run.md` gains a `## Decision Intake` section so the chair's reasoning is auditable against the situation the user actually described.
 
 ### Profile-aware doctor and recovery loop (Slice 5.7)
 

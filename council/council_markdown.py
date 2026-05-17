@@ -20,6 +20,37 @@ def _question_title(question: str, *, max_len: int = 80) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _format_intake_section(lines: list[str], result: CouncilRunResult) -> None:
+    intake = result.intake
+    if intake is None:
+        return
+    from council.intake import mode_profile
+
+    mode_label = mode_profile(intake.preferred_mode).label if intake.preferred_mode else "—"
+    lines.extend(
+        [
+            "",
+            "## Decision Intake",
+            "",
+            f"- **Goal:** {intake.goal or '—'}",
+            f"- **Preferred mode:** {mode_label}",
+        ]
+    )
+    if intake.context:
+        lines.append(f"- **Context:** {intake.context}")
+    if intake.constraints:
+        lines.append("- **Constraints:**")
+        lines.extend(f"  - {item}" for item in intake.constraints)
+    if intake.success_definition:
+        lines.append(f"- **Success criteria:** {intake.success_definition}")
+    if intake.risks:
+        lines.append("- **Biggest risks:**")
+        lines.extend(f"  - {item}" for item in intake.risks)
+    if intake.notes.strip():
+        lines.append(f"- **Notes:** {intake.notes.strip()}")
+    lines.append("")
+
+
 def _format_review_section(lines: list[str], result: CouncilRunResult) -> None:
     review = result.review
     if review is None:
@@ -260,6 +291,7 @@ def format_council_run_markdown(
         dossier.decision_question,
     ]
 
+    _format_intake_section(lines, result)
     _format_review_section(lines, result)
     _format_thread_section(lines, result)
     _format_cost_estimate_markdown(lines, result)

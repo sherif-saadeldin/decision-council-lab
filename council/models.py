@@ -11,6 +11,7 @@ from council.review_model import DecisionReview, default_review
 
 if TYPE_CHECKING:
     from council.decision_thread import DecisionThreadMeta
+    from council.intake import DecisionIntake
     from council.providers.models import ProviderMetadata, ProviderResponse
 
 
@@ -109,7 +110,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.9"
+RUN_SCHEMA_VERSION = "1.10"
 
 
 class RoleAssignmentRecord(BaseModel):
@@ -162,6 +163,9 @@ class CouncilRunResult(BaseModel):
     # the `draft` state with an empty history; review CLI/chat commands and
     # `council/review.py` mutate this in place.
     review: DecisionReview = Field(default_factory=default_review)
+    # Guided intake snapshot (Slice 6.0). Present when chat collected the
+    # user's goal / mode / constraints / etc. before running council.
+    intake: "DecisionIntake | None" = None
 
     @property
     def provider_name(self) -> str:
@@ -174,11 +178,13 @@ class CouncilRunResult(BaseModel):
 
 def _rebuild_models() -> None:
     from council.decision_thread import DecisionThreadMeta
+    from council.intake import DecisionIntake
     from council.providers.models import ProviderMetadata, ProviderResponse
 
     CouncilRunResult.model_rebuild(
         _types_namespace={
             "DecisionThreadMeta": DecisionThreadMeta,
+            "DecisionIntake": DecisionIntake,
             "ProviderMetadata": ProviderMetadata,
             "ProviderResponse": ProviderResponse,
         }

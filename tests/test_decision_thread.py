@@ -344,6 +344,12 @@ def test_topic_change_does_not_auto_attach_previous_context(
     mock_chat_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A topic-change natural message must NOT pull in the previous context.
+
+    Slice 6.0 routes non-follow-up natural input into a guided intake, so
+    the council runner is never called from this line — verifying the
+    follow-up branch correctly stays out of the way.
+    """
     captured: dict[str, CouncilSessionRequest] = {}
 
     def runner(request, **_kw):
@@ -360,10 +366,10 @@ def test_topic_change_does_not_auto_attach_previous_context(
     )
     save_run(_mock_council_result(run_id="run-root"), settings=mock_chat_settings)
     session.handle_line("Should we adopt Postgres for analytics?")
-    request = captured["req"]
-    # No follow-up phrase was used, so no parent context attachment.
-    assert request.parent_context is None
-    assert request.parent_run_id is None
+    # No follow-up phrase → no context auto-attached → intake started instead.
+    assert "req" not in captured
+    assert session.state.current_intake is not None
+    assert session.state.current_context is None
 
 
 def test_cmd_use_loads_context_from_disk(

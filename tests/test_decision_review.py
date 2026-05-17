@@ -365,9 +365,10 @@ def test_cmd_revise_loads_context_and_marks_revision(
         return _session_result(_council_result("child-rev"))
 
     state = ChatSessionState(last_run_id="parent-rev")
-    # Yes to the "Run council on this revision?" confirm; No to inline approval
-    # and No to pack.
-    confirms = iter([True, False, False])
+    # Slice 6.0 adds a "Show full council breakdown?" confirm between
+    # the short-form render and the inline approval prompt.
+    # Sequence: Run revision=Y, Show full breakdown=N, Approve=N, Pack=N.
+    confirms = iter([True, False, False, False])
     session, _, _ = _make_session(
         settings,
         monkeypatch,

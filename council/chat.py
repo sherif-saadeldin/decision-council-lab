@@ -44,6 +44,21 @@ from council.decision_thread import (
     summarize_for_context,
 )
 from council.doctor import CheckStatus, DoctorCheck
+from council.intake import (
+    DecisionIntake,
+    DecisionMode,
+    apply_intake_answer,
+    editable_fields,
+    empty_intake,
+    format_intake_summary,
+    is_intake_complete,
+    mode_picker_prompt,
+    mode_profile,
+    next_intake_question,
+    parse_mode,
+    question_for_field,
+    routing_for_mode,
+)
 from council.provider_availability import (
     HostedProviderUnavailableError,
     credential_source_for_preset,
@@ -144,35 +159,57 @@ FALLBACK_PROMPT = "Fallback to mock profile? [Y/n]"
 FALLBACK_PROFILE_NAME = "mock"
 
 CHAT_HELP_LINES: tuple[str, ...] = (
-    "/council <question>          — multi-model council (economy routing)",
+    "── Conversation ──",
+    "(Type naturally. I'll ask a few guided questions, summarize, then run the council.)",
+    "/intake                       — show or start the guided intake",
+    "/edit [field]                 — edit one intake field (goal, mode, context, ...)",
+    "/clear-intake                 — discard the current intake draft",
+    "/mode [name]                  — show or set the decision mode",
+    "/summary                      — show the current intake summary",
+    "",
+    "── Council ──",
+    "/council <question>          — skip intake; run multi-model council directly",
     "/run <question>              — single-provider council run",
     "/compare <question>          — compare mock preset (offline-safe default)",
-    "/doctor [--live|--live-completion]",
-    "                             — health check for the active profile",
-    "/presets                     — list model presets",
-    "/setup                       — interactive setup wizard",
+    "",
+    "── Runs + lifecycle ──",
     "/runs                        — list recent runs",
     "/show <run_id|last>          — inspect a saved run",
     "/pack <run_id|last> [--allow-unapproved]",
     "                             — generate implementation pack (approved runs only)",
-    "/prompts                     — system prompt inventory",
-    "/profile [name|list]         — show, list, or switch active config profile",
-    "/status                      — active profile, routing, cached health, last run",
-    "/context                     — show the active decision context (if any)",
-    "/use <run_id>                — load a previous run as decision context",
-    "/forget                      — clear active decision context and session memory",
-    "/thread                      — show the linked decision chain for the current thread",
-    "/approve <run_id|last> [note]  — mark a decision approved",
+    "/approve <run_id|last> [note]   — mark a decision approved",
     "/reject  <run_id|last> <reason> — mark a decision rejected (reason required)",
     "/revise  <run_id|last>          — start a contextual follow-up as a revision",
     "/review  <run_id|last>          — show lifecycle state and review history",
     "/archive <run_id|last> [note]   — archive a decision",
+    "/context                     — show the active decision context (if any)",
+    "/use <run_id>                — load a previous run as decision context",
+    "/forget                      — clear active decision context and session memory",
+    "/thread                      — show the linked decision chain for the current thread",
+    "",
+    "── Config + health ──",
+    "/doctor [--live|--live-completion]",
+    "                             — health check for the active profile",
+    "/presets                     — list model presets",
+    "/setup                       — interactive setup wizard",
+    "/prompts                     — system prompt inventory",
+    "/profile [name|list]         — show, list, or switch active config profile",
+    "/status                      — active profile, routing, cached health, last run",
     "/help                        — show this help",
     "/exit                        — leave chat",
-    "",
-    "Type a question without / to run council (confirms first).",
-    "Follow-ups like 'what if...' or 'make it cheaper' may prompt to reuse the last decision.",
 )
+
+INTAKE_OPENING_LINE = (
+    "Let's think this through together. I'll ask a few quick questions, "
+    "summarize what I heard, then run the council."
+)
+INTAKE_RUN_PROMPT = "Run council with this context? [Y/n]"
+INTAKE_EDIT_PROMPT = "Edit intake first?"
+INTAKE_DISCARDED_HINT = (
+    "Intake cleared. Type a fresh goal to start over, or use /council to skip "
+    "intake entirely."
+)
+SHOW_FULL_BREAKDOWN_PROMPT = "Show full council breakdown?"
 
 FOLLOW_UP_PROMPT_TEMPLATE = "Use previous decision context from {run_id}? [Y/n]"
 APPROVE_NOW_PROMPT = "Approve now?"
@@ -245,6 +282,14 @@ class ChatSessionState:
     current_context_run_id: str | None = None
     current_context: DecisionContext | None = None
     current_thread_id: str | None = None
+    # Slice 6.0: guided intake draft. `current_intake` is the in-flight
+    # DecisionIntake; `current_intake_field` is the field currently
+    # awaiting an answer. `current_mode` mirrors intake.preferred_mode and
+    # also accepts standalone `/mode` updates outside an intake.
+    current_intake: DecisionIntake | None = None
+    current_intake_field: str | None = None
+    current_mode: DecisionMode | None = None
+    last_intake: DecisionIntake | None = None  # snapshot of the last completed intake
 
 
 @dataclass(frozen=True)
@@ -446,6 +491,39 @@ def render_chat_verdict(console: Console, result: CouncilRunResult) -> None:
         console.print(f"[bold]Approval gate[/bold]\n  {dossier.approval_gate.strip()}\n")
 
 
+def render_chat_verdict_short(console: Console, result: CouncilRunResult) -> None:
+    """Slice 6.0: human-first verdict. Three reasons, biggest warning,
+    next step — then ask if the user wants the full breakdown."""
+    dossier = result.dossier
+    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
+    reasons = [r for r in dossier.why_this_decision[:3] if r.strip()]
+    warning = ""
+    if dossier.do_not_do:
+        warning = dossier.do_not_do[0].strip()
+    elif dossier.risks:
+        warning = dossier.risks[0].strip()
+    next_step = dossier.next_actions[0].strip() if dossier.next_actions else ""
+    body_lines = [f"[bold]{direct}[/bold]", ""]
+    if reasons:
+        body_lines.append("Why:")
+        for r in reasons:
+            body_lines.append(f"  • {r}")
+        body_lines.append("")
+    if warning:
+        body_lines.append(f"Biggest warning: {warning}")
+    if next_step:
+        body_lines.append(f"Next step: {next_step}")
+    body_lines.append("")
+    body_lines.append(f"Run ID: [cyan]{dossier.run_id}[/cyan]")
+    console.print(
+        Panel.fit(
+            "\n".join(body_lines),
+            title="Direct Answer",
+            border_style="green",
+        )
+    )
+
+
 def load_run_result(runs_dir: Path, run_id: str) -> CouncilRunResult:
     json_path = runs_dir / run_id / "run.json"
     if not json_path.is_file():
@@ -487,19 +565,193 @@ class ChatSession:
             return self._handle_natural(parsed.args)
         return self._handle_slash(parsed.command, parsed.args)
 
-    def _handle_natural(self, question: str) -> Literal["continue", "exit"]:
-        if looks_like_shell_command(question):
+    def _handle_natural(self, line: str) -> Literal["continue", "exit"]:
+        if looks_like_shell_command(line):
             self.error_console.print(SHELL_REJECTION_MESSAGE, style="yellow")
             return "continue"
-        self._maybe_attach_follow_up_context(question)
+
+        # If we're mid-intake, this line answers the current question.
+        if self.state.current_intake is not None and self.state.current_intake_field:
+            self._record_intake_answer(line)
+            return "continue"
+
+        # Slice 5.8 still applies: a clear follow-up phrase against a
+        # recent run is a contextual continuation, not a fresh intake.
+        # Try the follow-up path FIRST so users mid-thread don't get
+        # asked goal/mode/context all over again.
+        if self._try_follow_up_branch(line):
+            return "continue"
+
+        # Otherwise this line opens a new conversation. Start an intake
+        # using `line` as the goal — that's the most natural way to
+        # interpret "I want to build an AI movie startup."
+        return self._start_intake(initial_goal=line)
+
+    def _try_follow_up_branch(self, line: str) -> bool:
+        """Slice 5.8 path. Returns True when we handled `line` as a
+        contextual follow-up (and therefore should NOT start an intake)."""
+        if not self.state.last_run_id:
+            return False
+        if self.state.current_context is not None:
+            # Already have context — fall straight through to council on a
+            # confirm. Behaves like the old direct-to-council path.
+            return self._run_with_existing_context(line)
+        if not looks_like_follow_up(line):
+            return False
+        if not self.confirm_fn(
+            FOLLOW_UP_PROMPT_TEMPLATE.format(run_id=self.state.last_run_id),
+            True,
+        ):
+            return False
+        if not self._load_context_from_run(self.state.last_run_id):
+            return False
+        return self._run_with_existing_context(line)
+
+    def _run_with_existing_context(self, question: str) -> bool:
         if not self.confirm_fn("Run council on this?", True):
             self.console.print("[dim]Cancelled.[/dim]")
-            return "continue"
+            return True
         try:
             self._run_council(question)
         except KNOWN_PROJECT_ERRORS as exc:
-            self._handle_provider_failure(exc, retry=lambda: self._run_council(question))
+            self._handle_provider_failure(
+                exc, retry=lambda: self._run_council(question)
+            )
+        return True
+
+    # --- Slice 6.0: guided intake conversation ------------------------------
+
+    def _start_intake(self, *, initial_goal: str | None = None) -> Literal["continue", "exit"]:
+        intake = empty_intake()
+        if initial_goal:
+            intake = apply_intake_answer(intake, "goal", initial_goal)
+        self.state.current_intake = intake
+        self.console.print(f"[dim]{INTAKE_OPENING_LINE}[/dim]")
+        if initial_goal:
+            self.console.print(f"[green]Goal noted:[/green] {initial_goal}")
+        return self._advance_intake()
+
+    def _advance_intake(self) -> Literal["continue", "exit"]:
+        """Ask the next intake question, or jump to confirm when done."""
+        intake = self.state.current_intake
+        assert intake is not None
+        question = next_intake_question(intake)
+        if question is None or is_intake_complete(intake):
+            return self._confirm_intake_and_maybe_run()
+        self.state.current_intake_field = question.field
+        # Render the prompt without Rich markup interpretation so '(...)'
+        # and numbered lists in mode_picker_prompt render verbatim.
+        self.console.print(question.prompt, highlight=False, markup=False)
         return "continue"
+
+    def _record_intake_answer(self, answer: str) -> Literal["continue", "exit"]:
+        intake = self.state.current_intake
+        field = self.state.current_intake_field
+        assert intake is not None and field is not None
+        question = question_for_field(field)
+        text = answer.strip()
+        # Optional fields ('notes') accept an empty answer to skip.
+        if not text and question is not None and question.optional:
+            self.state.current_intake_field = None
+            return self._advance_intake()
+        # Mode field needs to parse; bad inputs re-ask without advancing.
+        if field == "preferred_mode" and parse_mode(text) is None:
+            self.error_console.print(
+                "I didn't recognize that mode. Try a number 1–6 or a keyword "
+                "like 'deep', 'risk', 'plan'.",
+                style="yellow",
+            )
+            return "continue"
+        updated = apply_intake_answer(intake, field, answer)
+        self.state.current_intake = updated
+        if field == "preferred_mode":
+            self.state.current_mode = updated.preferred_mode
+        self.state.current_intake_field = None
+        return self._advance_intake()
+
+    def _confirm_intake_and_maybe_run(self) -> Literal["continue", "exit"]:
+        intake = self.state.current_intake
+        assert intake is not None
+        self._render_intake_summary(intake)
+        if self.confirm_fn(INTAKE_RUN_PROMPT, True):
+            self._finalize_intake_and_run()
+            return "continue"
+        # User said no — offer an edit pass before discarding.
+        if self.confirm_fn(INTAKE_EDIT_PROMPT, False):
+            field = self._prompt_for_field_to_edit()
+            if field is not None:
+                self.state.current_intake_field = field
+                question = question_for_field(field)
+                if question is not None:
+                    self.console.print(
+                        question.prompt, highlight=False, markup=False
+                    )
+            return "continue"
+        self._clear_intake_state()
+        self.console.print(f"[dim]{INTAKE_DISCARDED_HINT}[/dim]")
+        return "continue"
+
+    def _prompt_for_field_to_edit(self) -> str | None:
+        """Use input_fn directly so the user can type the field name to edit."""
+        self.console.print(
+            f"Which field? ({', '.join(editable_fields())})"
+        )
+        try:
+            raw = self.input_fn("edit field> ")
+        except (EOFError, KeyboardInterrupt):
+            return None
+        field = raw.strip().lower()
+        if field not in editable_fields():
+            self.error_console.print(
+                f"Unknown field {field!r}. Edit cancelled.", style="yellow"
+            )
+            return None
+        return field
+
+    def _finalize_intake_and_run(self) -> None:
+        intake = self.state.current_intake
+        assert intake is not None
+        question_text = self._intake_to_question(intake)
+        # Snapshot the intake before we hand it to the council so it
+        # survives a clear-intake mid-flight.
+        self.state.last_intake = intake
+        mode_routing = routing_for_mode(intake.preferred_mode)
+        # Apply the mode's routing preference to this session unless the
+        # user has already overridden via /mode.
+        if mode_routing is not None:
+            self.state.routing_mode = mode_routing.routing_mode
+            self.state.current_mode = intake.preferred_mode
+        try:
+            self._run_council(question_text, intake=intake)
+        except KNOWN_PROJECT_ERRORS as exc:
+            self._handle_provider_failure(
+                exc, retry=lambda: self._run_council(question_text, intake=intake)
+            )
+        # Clear current intake but keep last_intake for /summary reuse.
+        self.state.current_intake = None
+        self.state.current_intake_field = None
+
+    def _intake_to_question(self, intake: DecisionIntake) -> str:
+        """Turn the intake into a one-line question for the chair.
+
+        The full structured context is prepended separately via
+        `compose_question_with_intake`; this string is the human-shaped
+        question itself.
+        """
+        goal = intake.goal.strip() or "(no explicit goal)"
+        return f"Given the situation above, what should I do about: {goal}"
+
+    def _render_intake_summary(self, intake: DecisionIntake) -> None:
+        from rich.panel import Panel
+
+        text = format_intake_summary(intake)
+        self.console.print(
+            Panel(text, title="Decision intake", border_style="cyan")
+        )
+
+    def _clear_intake_state(self) -> None:
+        self.state.current_intake = None
+        self.state.current_intake_field = None
 
     def _handle_slash(self, command: str, args: str) -> Literal["continue", "exit"]:
         handlers: dict[str, Callable[[str], Literal["continue", "exit"]]] = {
@@ -527,6 +779,13 @@ class ChatSession:
             "revise": self._cmd_revise,
             "review": self._cmd_review,
             "archive": self._cmd_archive,
+            # Slice 6.0: guided intake commands.
+            "intake": lambda _a: self._cmd_intake(),
+            "edit": self._cmd_edit,
+            "clear-intake": lambda _a: self._cmd_clear_intake(),
+            "clear_intake": lambda _a: self._cmd_clear_intake(),  # accept either form
+            "mode": self._cmd_mode,
+            "summary": lambda _a: self._cmd_summary(),
         }
         handler = handlers.get(command)
         if handler is None:
@@ -1202,18 +1461,38 @@ class ChatSession:
         if not question:
             self.error_console.print("Usage: /council <question>", style="red")
             return "continue"
-        self._run_council(question)
+        # Pass an explicit retry so a hosted-provider failure can trigger
+        # the Slice 5.7 fallback-to-mock loop just like the natural-input
+        # path does.
+        try:
+            self._run_council(question)
+        except KNOWN_PROJECT_ERRORS as exc:
+            self._handle_provider_failure(
+                exc, retry=lambda: self._run_council(question)
+            )
         return "continue"
 
-    def _run_council(self, question: str) -> None:
+    def _run_council(self, question: str, *, intake: DecisionIntake | None = None) -> None:
         from council.routing_modes import resolve_debate_rounds
 
+        # Slice 6.0: if an intake's mode prefers a specific debate count,
+        # use that as the default unless an explicit profile override exists.
+        intake_mode_profile = (
+            mode_profile(intake.preferred_mode)
+            if intake is not None and intake.preferred_mode is not None
+            else None
+        )
+        profile_default = resolve_debate_rounds_with_profile(
+            self.ctx.config_profile,
+            cli_debate_rounds=None,
+            runtime=self.ctx.runtime,
+        )
         debate_rounds = resolve_debate_rounds(
             self.state.routing_mode,
-            cli_debate_rounds=resolve_debate_rounds_with_profile(
-                self.ctx.config_profile,
-                cli_debate_rounds=None,
-                runtime=self.ctx.runtime,
+            cli_debate_rounds=(
+                intake_mode_profile.debate_rounds
+                if intake_mode_profile is not None
+                else profile_default
             ),
             max_debate_rounds=None,
         )
@@ -1221,6 +1500,10 @@ class ChatSession:
         if context is not None:
             self.console.print(
                 f"[cyan]{CONTEXT_BLOCK_HEADER} (parent {context.run_id})[/cyan]"
+            )
+        if intake is not None:
+            self.console.print(
+                "[cyan]Using guided intake context (goal, constraints, mode).[/cyan]"
             )
         request = CouncilSessionRequest(
             question=question,
@@ -1233,6 +1516,7 @@ class ChatSession:
             parent_context=context,
             parent_run_id=(context.run_id if context is not None else None),
             thread_id=self.state.current_thread_id,
+            intake=intake,
         )
         plan = plan_council_session(request)
         enforce_cost_budget(
@@ -1258,7 +1542,11 @@ class ChatSession:
         # to load from disk if the user accepts the inline approval prompt.
         _, md_path = save_run(session.result, settings=self.ctx.settings)
         self._record_session_memory(question, session.result, pack_paths=[])
-        render_chat_verdict(self.console, session.result)
+        # Slice 6.0: human-first result. Show the short form by default;
+        # the full panel is one confirm away.
+        render_chat_verdict_short(self.console, session.result)
+        if self.confirm_fn(SHOW_FULL_BREAKDOWN_PROMPT, False):
+            render_chat_verdict(self.console, session.result)
         self.console.print(f"[green]Saved:[/green] {md_path}")
         self.console.print(
             f"[dim]Decision state:[/dim] [{_lifecycle_style(LifecycleState.DRAFT.value)}]"
@@ -1450,6 +1738,113 @@ class ChatSession:
             )
         self.console.print(
             Panel("\n".join(lines), title="Decision Thread", border_style="cyan")
+        )
+        return "continue"
+
+    # --- Slice 6.0: intake commands ---------------------------------------
+
+    def _cmd_intake(self) -> Literal["continue", "exit"]:
+        if self.state.current_intake is None:
+            # Start a fresh intake; goal will be the next thing the user types.
+            self.state.current_intake = empty_intake()
+            self.console.print(f"[dim]{INTAKE_OPENING_LINE}[/dim]")
+            return self._advance_intake()
+        self._render_intake_summary(self.state.current_intake)
+        if self.state.current_intake_field:
+            question = question_for_field(self.state.current_intake_field)
+            if question is not None:
+                self.console.print(
+                    "[dim]Currently waiting on:[/dim]",
+                )
+                self.console.print(
+                    question.prompt, highlight=False, markup=False
+                )
+        return "continue"
+
+    def _cmd_summary(self) -> Literal["continue", "exit"]:
+        intake = self.state.current_intake or self.state.last_intake
+        if intake is None:
+            self.console.print(
+                "No intake yet. Type a goal naturally, or use /intake to start."
+            )
+            return "continue"
+        self._render_intake_summary(intake)
+        return "continue"
+
+    def _cmd_clear_intake(self) -> Literal["continue", "exit"]:
+        had_intake = self.state.current_intake is not None
+        self._clear_intake_state()
+        if had_intake:
+            self.console.print(
+                "[green]Cleared the current intake draft.[/green]"
+            )
+        else:
+            self.console.print("[dim]No intake to clear.[/dim]")
+        return "continue"
+
+    def _cmd_edit(self, args: str) -> Literal["continue", "exit"]:
+        intake = self.state.current_intake or self.state.last_intake
+        if intake is None:
+            self.error_console.print(
+                "No intake to edit. Type a goal naturally to start one.",
+                style="red",
+            )
+            return "continue"
+        # If editing the snapshot of the last completed intake, lift it
+        # back into current so the answer flow updates it in place.
+        if self.state.current_intake is None and self.state.last_intake is not None:
+            self.state.current_intake = self.state.last_intake
+        field = args.strip().lower()
+        if not field:
+            field = self._prompt_for_field_to_edit() or ""
+        if not field:
+            return "continue"
+        if field not in editable_fields():
+            self.error_console.print(
+                f"Unknown field {field!r}. Available: {', '.join(editable_fields())}",
+                style="red",
+            )
+            return "continue"
+        self.state.current_intake_field = field
+        question = question_for_field(field)
+        if question is not None:
+            self.console.print(question.prompt, highlight=False, markup=False)
+        return "continue"
+
+    def _cmd_mode(self, args: str) -> Literal["continue", "exit"]:
+        token = args.strip()
+        if not token:
+            current = (
+                self.state.current_mode
+                or (self.state.current_intake.preferred_mode if self.state.current_intake else None)
+                or (self.state.last_intake.preferred_mode if self.state.last_intake else None)
+            )
+            if current is not None:
+                profile = mode_profile(current)
+                self.console.print(
+                    f"Current mode: [cyan]{profile.label}[/cyan] "
+                    f"(routing={profile.routing_mode}, debate={profile.debate_rounds}, "
+                    f"{profile.slot_emphasis})"
+                )
+            else:
+                self.console.print("No decision mode set.")
+            self.console.print(mode_picker_prompt(), highlight=False, markup=False)
+            return "continue"
+        parsed = parse_mode(token)
+        if parsed is None:
+            self.error_console.print(
+                "Unknown mode. Pick a number 1–6 or a keyword like 'deep', 'risk', 'plan'.",
+                style="red",
+            )
+            return "continue"
+        self.state.current_mode = parsed
+        if self.state.current_intake is not None:
+            self.state.current_intake = self.state.current_intake.model_copy(
+                update={"preferred_mode": parsed}
+            )
+        profile = mode_profile(parsed)
+        self.console.print(
+            f"[green]Mode set to[/green] [cyan]{profile.label}[/cyan]: {profile.description}"
         )
         return "continue"
 

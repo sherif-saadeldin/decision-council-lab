@@ -92,6 +92,36 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 `council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
 
+### Guided decision conversation (Slice 6.0)
+
+**The conversation layer is the product. The council layer is the engine.** Natural input in chat no longer fires the council directly — it opens a short structured intake.
+
+`council/intake.py` is pure-logic, no I/O:
+- `DecisionMode` enum: `fast_answer`, `deep_analysis`, `pressure_test`, `build_plan`, `risk_review`, `execution_roadmap`. Each has a `ModeProfile` mapping to existing routing knobs (`routing_mode`, `debate_rounds`, free-text `slot_emphasis`).
+- `DecisionIntake` Pydantic model: `goal`, `context`, `constraints: list[str]`, `risks: list[str]`, `success_definition`, `preferred_mode: DecisionMode | None`, `notes`.
+- Flow helpers: `INTAKE_QUESTIONS` (ordered), `next_intake_question`, `apply_intake_answer`, `is_intake_complete`, `parse_mode` (numbers or keywords), `format_intake_summary`, `compose_question_with_intake`.
+
+The chat session ([council/chat.py](council/chat.py)) drives it:
+
+1. **Natural input** — if no intake is active, the first line becomes the goal and the conversation starts. If a follow-up phrase matches a recent run (Slice 5.8), that branch wins first and skips intake.
+2. **Subsequent lines** — answer the current question (mode → context → constraints → success → risks → optional notes). Bad mode answers re-ask without advancing.
+3. **Summary panel** — once all required fields are answered, render `"Here's my understanding"` and ask `"Run council with this context? [Y/n]"`. Decline → offer `Edit intake first?` → pick a field to edit; second decline discards the draft.
+4. **Council run** — the intake is prepended to the chair question via `compose_question_with_intake`, the mode's routing/debate defaults override the session defaults, and the intake is persisted on `CouncilRunResult.intake`.
+5. **Human-first result** — `render_chat_verdict_short` shows only direct answer + top 3 reasons + biggest warning + next step. The full panel (`Do next`, `Do not do`, `Approval gate`) is one confirm away: `Show full council breakdown? [y/N]`.
+
+New chat commands:
+
+| Command | Behavior |
+| --- | --- |
+| `/intake` | Show current intake, or start a fresh one |
+| `/edit [field]` | Edit a single intake field (goal, mode, context, constraints, success, risks, notes) |
+| `/clear-intake` | Discard the in-flight intake draft |
+| `/mode [name]` | Show or set the decision mode; affects routing/debate defaults |
+| `/summary` | Show the current intake summary |
+| `/council <question>` | **Skip intake**; go straight to council. Power-user bypass for direct queries. |
+
+`RUN_SCHEMA_VERSION` bumped **1.9 → 1.10**. `CouncilRunResult.intake: DecisionIntake | None` is optional so non-chat callers (CLI `run`, `council`, `compare`, `smoke`) keep working unchanged — `intake` is `null` on those runs. Council markdown gains a `## Decision Intake` section when the field is set.
+
 ### CLI surface for the review lifecycle (Slice 5.10)
 
 Slice 5.9 wired the lifecycle into the chat slash verbs. Slice 5.10 lifts every verb to a first-class `main.py` subcommand so CI, scripts, cron, and other coding tools can govern decisions without an interactive chat session.
@@ -335,7 +365,7 @@ Configuration errors:
 
 ## Run artifacts
 
-- `schema_version` **1.9** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review` for Slice 5.9)
+- `schema_version` **1.10** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review`; 1.10 added `intake` for Slice 6.0)
 - `debate_transcript` when `--debate-rounds` > 0
 - optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON

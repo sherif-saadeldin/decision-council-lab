@@ -141,7 +141,10 @@ def test_doctor_command_calls_doctor(chat_ctx) -> None:
     assert "Doctor" in out.getvalue()
 
 
-def test_natural_question_asks_confirmation(chat_ctx) -> None:
+def test_natural_question_starts_guided_intake(chat_ctx) -> None:
+    """Slice 6.0: natural input opens the guided intake instead of
+    firing council directly. The 'Run council on this?' confirm is
+    only reached after the intake summary."""
     ctx = chat_ctx
     confirms: list[tuple[str, bool]] = []
 
@@ -157,23 +160,53 @@ def test_natural_question_asks_confirmation(chat_ctx) -> None:
         council_runner=MagicMock(),
     )
     session.handle_line("Should we ship the MVP?")
-    assert confirms == [("Run council on this?", True)]
+    # No confirm yet — we're inside the intake conversation waiting on
+    # the next question (preferred_mode after goal).
+    assert confirms == []
+    assert session.state.current_intake is not None
+    assert session.state.current_intake.goal == "Should we ship the MVP?"
+    assert session.state.current_intake_field == "preferred_mode"
 
 
-def test_council_flow_sets_last_run_and_shows_verdict(chat_ctx) -> None:
+def test_council_flow_sets_last_run_and_shows_short_verdict(chat_ctx) -> None:
+    """Slice 6.0: /council still skips intake; default render is the
+    short form (direct answer + reasons + warning + next step).
+    The full 'Do not do' / 'Approval gate' panel is opt-in."""
     ctx = chat_ctx
     out = StringIO()
     session = ChatSession(
         console=Console(file=out, force_terminal=True, width=120),
         error_console=Console(file=StringIO(), force_terminal=True, width=120),
         ctx=ctx,
-        confirm_fn=lambda _m, _d: False,
+        confirm_fn=lambda _m, _d: False,  # decline full breakdown, approve, pack
         council_runner=lambda *_a, **_k: _session_result(),
     )
     session.handle_line("/council Ship the MVP?")
     assert session.state.last_run_id == "chat-run-001"
     text = out.getvalue()
     assert "Direct Answer" in text
+    assert "Why:" in text
+    assert "Biggest warning" in text or "Next step" in text
+
+
+def test_council_flow_full_breakdown_opt_in(chat_ctx) -> None:
+    """Saying yes to 'Show full council breakdown?' renders the full panel."""
+    ctx = chat_ctx
+    out = StringIO()
+    answers = iter([True, False, False])  # full breakdown=yes, approve=no, pack=no
+
+    def confirm(_msg, _default):
+        return next(answers, False)
+
+    session = ChatSession(
+        console=Console(file=out, force_terminal=True, width=120),
+        error_console=Console(file=StringIO(), force_terminal=True, width=120),
+        ctx=ctx,
+        confirm_fn=confirm,
+        council_runner=lambda *_a, **_k: _session_result(),
+    )
+    session.handle_line("/council Ship the MVP?")
+    text = out.getvalue()
     assert "Do next" in text
     assert "Do not do" in text
     assert "Approval gate" in text
@@ -482,7 +515,9 @@ def test_chat_recovers_from_hosted_provider_failure(chat_ctx, monkeypatch: pytes
         return "Run council on this?" in message  # only the first confirm: Yes
 
     session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=confirm)
-    assert session.handle_line("Should we ship?") == "continue"
+    # Slice 6.0: use /council to skip intake and exercise the direct
+    # council path (where the provider failure is what we're testing).
+    assert session.handle_line("/council Should we ship?") == "continue"
     err_text = err.getvalue()
     assert "openrouter" in err_text
     # New recovery UX prints a Reason line and a Fix line; Rich won't

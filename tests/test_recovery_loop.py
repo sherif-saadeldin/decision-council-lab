@@ -409,7 +409,10 @@ def test_recovery_accepts_fallback_switches_profile_and_retries(
         council_runner=runner,
         confirm_fn=lambda _m, _d: True,  # Yes to council confirm + Yes to fallback
     )
-    session.handle_line("Should we ship?")
+    # Slice 6.0: natural input routes through guided intake first. Use
+    # /council to skip intake and exercise the direct council path that
+    # this test is about (provider failure → fallback → retry).
+    session.handle_line("/council Should we ship?")
     # Two attempts: original (failed) + retry under mock.
     assert call_count["n"] == 2
     assert session.state.config_profile_name == FALLBACK_PROFILE_NAME
