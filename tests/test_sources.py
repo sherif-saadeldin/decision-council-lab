@@ -4,6 +4,7 @@ import json
 from io import StringIO
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from council.chat import ChatSession, ChatSessionState, build_chat_context
@@ -122,6 +123,31 @@ def test_source_pack_storage_round_trip(tmp_path: Path) -> None:
     assert service.remove(saved.source_pack_id) is True
 
 
+def test_source_alias_can_be_assigned_and_resolved(tmp_path: Path) -> None:
+    source_path = tmp_path / "docs"
+    source_path.mkdir()
+    (source_path / "a.md").write_text("# Architecture", encoding="utf-8")
+    service = SourceService(base_dir=tmp_path / ".dcouncil" / "sources")
+    pack = service.scan_and_save(source_path, name="repo-docs", alias="repo")
+    assert pack.alias == "repo"
+    loaded = service.load("repo")
+    assert loaded.source_pack_id == pack.source_pack_id
+    loaded_by_id = service.load(pack.source_pack_id)
+    assert loaded_by_id.source_pack_id == pack.source_pack_id
+
+
+def test_source_alias_collision_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "a.md").write_text("# A", encoding="utf-8")
+    service = SourceService(base_dir=tmp_path / ".dcouncil" / "sources")
+    first = service.scan_and_save(root, name="one", alias="repo")
+    second = service.scan_and_save(root, name="two", alias="repo")
+    assert second.alias != "repo"
+    with pytest.raises(ValueError):
+        service.set_alias(second.source_pack_id, first.alias or "repo")
+
+
 def test_source_context_is_capped(tmp_path: Path) -> None:
     source_path = tmp_path / "src"
     source_path.mkdir()
@@ -175,6 +201,8 @@ def test_chat_source_commands(mock_settings, monkeypatch) -> None:
     active = session.state.active_source_pack_ids[0]
     session.handle_line("/sources")
     session.handle_line(f"/source show {active}")
+    session.handle_line(f"/source alias {active} repo")
+    session.handle_line("/source use repo")
     session.handle_line("/source query architecture")
     session.handle_line("/source clear")
     assert session.state.active_source_pack_ids == []

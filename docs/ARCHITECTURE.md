@@ -464,6 +464,17 @@ trust and conversation quality:
 - **Intake normalization** (`council/intake_normalizer.py`): shorthand fragments are normalized into structured constraints/risks.
 - **Strategic relevance weighting**: deterministic ranking boosts strategic docs (`README`, `ARCHITECTURE`, `ROADMAP`, `SPEC`, `BUILD_ORDER`, `PLAN`, `PRODUCT`, `VISION`, `TODO`) and de-prioritizes implementation-noise files (`tests`, prompt files, renderers, cache/generated files) unless explicitly requested.
 
+## Cognitive simplicity and source identity UX (Slice 6.5)
+
+Slice 6.5 preserves all commands and flow capabilities while reducing default
+cognitive load:
+
+- **Minimal startup surface**: chat opens with a short workspace summary, not a full command catalog.
+- **Tiered help**: `/help` defaults to core usage; advanced/lifecycle/source commands are intentionally discoverable through `/help advanced`, `/help lifecycle`, `/help sources`.
+- **Source identity UX**: `SourcePack` now includes optional human alias support; service-layer lookup accepts `alias` or UUID transparently for backward compatibility.
+- **Conversational source grounding**: source recap and relevance summaries use human-readable categories (architecture, roadmap/planning, product strategy, implementation history).
+- **Hidden complexity principle**: default interaction remains calm; operational details are available on demand (`/status`, advanced help flows), not foregrounded.
+
 ## Run artifacts
 
 - `schema_version` **1.11** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review`; 1.10 added `intake`; 1.11 adds `source_pack_ids` and `source_context_summary`)

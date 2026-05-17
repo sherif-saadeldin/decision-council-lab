@@ -137,6 +137,18 @@ uv run python main.py run "Question?" --operational-profile cheap
 uv run python main.py council "Question?" --operational-profile balanced
 ```
 
+## Cognitive simplicity and source identity UX (Slice 6.5)
+
+Slice 6.5 keeps all capabilities but hides complexity by default:
+
+- chat startup is intentionally minimal (mode + active sources + simple next step)
+- `/help` is tiered: default, `/help sources`, `/help lifecycle`, `/help advanced`
+- source packs support human aliases (for example `repo`, `startup-plan`) while UUID IDs remain fully supported
+- source grounding language is conversational (`I reviewed:` categories) instead of operational
+- decision mode labels are humanized for emotional clarity rather than tooling terms
+
+This follows a **hidden complexity** principle: advanced controls remain available via explicit help/status paths, while first-run experience stays calm and focused.
+
 ### Guided decision conversation (Slice 6.0)
 
 Example session:

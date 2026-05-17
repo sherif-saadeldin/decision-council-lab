@@ -42,7 +42,8 @@ Slice 6.1 — Application boundary hardening: service layer, RunStore abstractio
 Slice 6.2 — Source packs and folder-based context (done)
 Slice 6.3 — Deterministic source relevance engine (done)
 Slice 6.4 — Human-first conversational UX stabilization (done)
-Slice 6.5 — Anthropic/Gemini native SDK providers
+Slice 6.5 — Cognitive simplicity and source identity UX (done)
+Slice 6.6 — Anthropic/Gemini native SDK providers
 Slice 7 — Memory/revisit system
 Slice 8 — CLI enhancements
 Slice 9 — UI integration later

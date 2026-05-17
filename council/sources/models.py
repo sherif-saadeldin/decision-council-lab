@@ -45,6 +45,7 @@ class SourceRelevanceRecord(BaseModel):
 class SourcePack(BaseModel):
     source_pack_id: str
     name: str
+    alias: str | None = None
     root_path: str | None = None
     file_paths: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

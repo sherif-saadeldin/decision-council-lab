@@ -1279,6 +1279,7 @@ def render_sources_list(console: Console, packs: list[SourcePack]) -> None:
         return
     table = Table(title="Source packs")
     table.add_column("ID", style="bold")
+    table.add_column("Alias")
     table.add_column("Name")
     table.add_column("Files")
     table.add_column("Bytes")
@@ -1286,6 +1287,7 @@ def render_sources_list(console: Console, packs: list[SourcePack]) -> None:
     for pack in packs:
         table.add_row(
             pack.source_pack_id,
+            pack.alias or "—",
             pack.name,
             str(pack.file_count),
             str(pack.total_bytes),
@@ -1297,6 +1299,7 @@ def render_sources_list(console: Console, packs: list[SourcePack]) -> None:
 def render_sources_show(console: Console, pack: SourcePack) -> None:
     lines = [
         f"ID: [cyan]{pack.source_pack_id}[/cyan]",
+        f"Alias: {pack.alias or '—'}",
         f"Name: {pack.name}",
         f"Created: {pack.created_at.isoformat()}",
         f"Files: {pack.file_count}",

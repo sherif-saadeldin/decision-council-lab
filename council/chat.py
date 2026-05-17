@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -317,24 +318,27 @@ def _first_failing_message(checks: list[DoctorCheck]) -> str:
 
 
 def _human_source_recap(payload) -> str:
-    important: list[str] = []
-    implementation: list[str] = []
+    categories: dict[str, int] = {
+        "architecture decisions": 0,
+        "roadmap and planning docs": 0,
+        "product strategy notes": 0,
+        "implementation history": 0,
+    }
     for item in payload.relevance[:8]:
         path = item.path.lower()
-        if any(token in path for token in ("readme", "architecture", "roadmap", "spec", "build_order", "plan", "vision", "product", "todo")):
-            important.append(item.path)
+        if any(token in path for token in ("architecture", "spec", "build_order")):
+            categories["architecture decisions"] += 1
+        elif any(token in path for token in ("roadmap", "plan", "todo")):
+            categories["roadmap and planning docs"] += 1
+        elif any(token in path for token in ("readme", "product", "vision")):
+            categories["product strategy notes"] += 1
         else:
-            implementation.append(item.path)
-    if important:
-        return (
-            "[cyan]I reviewed your strategic docs first[/cyan]: "
-            + ", ".join(important[:3])
-        )
-    if implementation:
-        return (
-            "[cyan]I reviewed your implementation history before generating this verdict[/cyan]: "
-            + ", ".join(implementation[:3])
-        )
+            categories["implementation history"] += 1
+    selected = [label for label, count in categories.items() if count > 0]
+    if selected:
+        lines = ["[cyan]I reviewed:[/cyan]"]
+        lines.extend(f"- {label}" for label in selected[:3])
+        return "\n".join(lines)
     return "[cyan]I reviewed the attached source context before generating this verdict.[/cyan]"
 
 
@@ -640,7 +644,7 @@ class ChatSession:
         handlers: dict[str, Callable[[str], Literal["continue", "exit"]]] = {
             "exit": lambda _a: self._cmd_exit(),
             "quit": lambda _a: self._cmd_exit(),
-            "help": lambda _a: self._cmd_help(),
+            "help": self._cmd_help,
             "council": self._cmd_council,
             "run": self._cmd_run,
             "compare": self._cmd_compare,
@@ -760,8 +764,8 @@ class ChatSession:
         self.console.print("Goodbye.")
         return "exit"
 
-    def _cmd_help(self) -> Literal["continue", "exit"]:
-        render_chat_help(self.console)
+    def _cmd_help(self, args: str = "") -> Literal["continue", "exit"]:
+        render_chat_help(self.console, args)
         return "continue"
 
     def _cmd_doctor(self, args: str = "") -> Literal["continue", "exit"]:
@@ -1057,7 +1061,7 @@ class ChatSession:
         return "continue"
 
     def _cmd_pack(self, args: str) -> Literal["continue", "exit"]:
-        tokens = args.split()
+        tokens = shlex.split(args)
         override = False
         positional: list[str] = []
         for token in tokens:
@@ -1678,18 +1682,26 @@ class ChatSession:
         return "continue"
 
     def _cmd_sources(self) -> Literal["continue", "exit"]:
-        render_sources_list(self.console, self._source_service().list_packs())
+        packs = self._source_service().list_packs()
+        render_sources_list(self.console, packs)
         if self.state.active_source_pack_ids:
+            labels = []
+            for source_pack_id in self.state.active_source_pack_ids:
+                try:
+                    pack = self._source_service().load(source_pack_id)
+                    labels.append(pack.alias or pack.source_pack_id)
+                except ValueError:
+                    labels.append(source_pack_id)
             self.console.print(
-                f"Active source packs: {', '.join(self.state.active_source_pack_ids)}"
+                f"Active source packs: {', '.join(labels)}"
             )
         return "continue"
 
     def _cmd_source(self, args: str) -> Literal["continue", "exit"]:
-        tokens = args.split(maxsplit=2)
+        tokens = args.split()
         if not tokens:
             self.error_console.print(
-                "Usage: /source scan <path> | use <id> | clear | show <id> | query <question>",
+                "Usage: /source scan <path> [alias] | use <id|alias> | alias <id|alias> <alias> | clear | show <id|alias> | query <question>",
                 style="red",
             )
             return "continue"
@@ -1697,20 +1709,33 @@ class ChatSession:
         service = self._source_service()
         if sub == "scan":
             if len(tokens) < 2:
-                self.error_console.print("Usage: /source scan <path>", style="red")
+                self.error_console.print("Usage: /source scan <path> [alias]", style="red")
                 return "continue"
-            pack = service.scan_and_save(Path(tokens[1]))
+            alias = tokens[2] if len(tokens) >= 3 else None
+            pack = service.scan_and_save(Path(tokens[1]), alias=alias)
             self.state.active_source_pack_ids = [pack.source_pack_id]
             render_sources_show(self.console, pack)
-            self.console.print(f"[green]Got it. Active source pack:[/green] {pack.source_pack_id}")
+            label = pack.alias or pack.source_pack_id
+            self.console.print(f"[green]Got it. Active source pack:[/green] {label}")
             return "continue"
         if sub == "use":
             if len(tokens) < 2:
-                self.error_console.print("Usage: /source use <source_pack_id>", style="red")
+                self.error_console.print("Usage: /source use <source_pack_id|alias>", style="red")
                 return "continue"
             pack = service.load(tokens[1])
             self.state.active_source_pack_ids = [pack.source_pack_id]
-            self.console.print(f"[green]Using source pack:[/green] {pack.source_pack_id}")
+            self.console.print(f"[green]Using source pack:[/green] {pack.alias or pack.source_pack_id}")
+            return "continue"
+        if sub == "alias":
+            if len(tokens) < 3:
+                self.error_console.print("Usage: /source alias <source_pack_id|alias> <alias>", style="red")
+                return "continue"
+            try:
+                pack = service.set_alias(tokens[1], tokens[2])
+            except ValueError as exc:
+                self.error_console.print(str(exc), style="red")
+                return "continue"
+            self.console.print(f"[green]Alias saved:[/green] {pack.source_pack_id} -> {pack.alias}")
             return "continue"
         if sub == "clear":
             self.state.active_source_pack_ids = []
@@ -1718,7 +1743,7 @@ class ChatSession:
             return "continue"
         if sub == "show":
             if len(tokens) < 2:
-                self.error_console.print("Usage: /source show <source_pack_id>", style="red")
+                self.error_console.print("Usage: /source show <source_pack_id|alias>", style="red")
                 return "continue"
             render_sources_show(self.console, service.load(tokens[1]))
             return "continue"
@@ -1738,21 +1763,20 @@ class ChatSession:
                 render_sources_query(self.console, source_pack_id, payload)
             return "continue"
         self.error_console.print(
-            "Usage: /source scan <path> | use <id> | clear | show <id> | query <question>",
+            "Usage: /source scan <path> [alias] | use <id|alias> | alias <id|alias> <alias> | clear | show <id|alias> | query <question>",
             style="red",
         )
         return "continue"
 
     def run_loop(self) -> int:
-        config_label = self.state.config_profile_name or resolve_active_config_profile_name(
-            self.ctx.config
-        )
+        active_sources = self._active_source_labels()
+        has_previous_run = bool(self.state.last_run_id) or any(self.ctx.settings.runs_dir.glob("*/run.json"))
         render_chat_welcome(
             self.console,
-            config_profile_name=config_label,
-            system_profile=self.state.system_profile,
-            routing_mode=self.state.routing_mode,
             operational_profile=self.state.operational_profile,
+            active_sources=active_sources,
+            has_previous_run=has_previous_run,
+            has_active_thread=bool(self.state.current_thread_id),
             operational_note=self.state.operational_fallback,
         )
         while True:
@@ -1765,6 +1789,18 @@ class ChatSession:
             if status == "exit":
                 break
         return 0
+
+    def _active_source_labels(self) -> list[str]:
+        if not self.state.active_source_pack_ids:
+            return []
+        labels: list[str] = []
+        for source_pack_id in self.state.active_source_pack_ids:
+            try:
+                pack = self._source_service().load(source_pack_id)
+                labels.append(pack.alias or pack.source_pack_id)
+            except ValueError:
+                labels.append(source_pack_id)
+        return labels
 
 
 def _default_confirm(message: str, default: bool) -> bool:

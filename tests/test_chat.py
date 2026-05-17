@@ -33,6 +33,7 @@ from council.doctor import CheckStatus, DoctorCheck
 from council.models import CouncilRunResult, DecisionDossier, DecisionType
 from council.providers.models import ProviderMetadata
 from council.storage import save_run
+from council.sources.models import SourceRelevanceRecord
 
 
 def _mock_council_result(question: str = "Test?") -> CouncilRunResult:
@@ -94,20 +95,80 @@ def test_chat_help_renders() -> None:
             assert line.split()[0] in text or line in text
 
 
+def test_chat_help_command_supports_topics(chat_ctx) -> None:
+    ctx = chat_ctx
+    out = StringIO()
+    session = ChatSession(
+        console=Console(file=out, force_terminal=True, width=120),
+        error_console=Console(file=StringIO(), force_terminal=True, width=120),
+        ctx=ctx,
+    )
+    session.handle_line("/help advanced")
+    text = out.getvalue()
+    assert "Advanced help" in text
+    assert "/help lifecycle" in text
+
+
 def test_welcome_shows_system_profile() -> None:
     buffer = StringIO()
     render_chat_welcome(
         Console(file=buffer, force_terminal=True, width=120),
-        config_profile_name="mock",
-        system_profile="default",
-        routing_mode="economy",
         operational_profile="offline",
         operational_note=None,
+        active_sources=["repo"],
+        has_previous_run=True,
+        has_active_thread=False,
     )
     text = buffer.getvalue()
-    assert "default" in text
-    assert "economy" in text
-    assert "mock" in text
+    assert "Decision Workspace" in text
+    assert "offline mode" in text
+    assert "Active sources: repo" in text
+    assert "Use /help for commands" in text
+
+
+def test_help_is_tiered_and_default_is_minimal() -> None:
+    buffer = StringIO()
+    console = Console(file=buffer, force_terminal=True, width=120)
+    render_chat_help(console)
+    text = buffer.getvalue()
+    assert "Core commands" in text
+    assert "/help advanced" in text
+    assert "/approve" not in text
+
+    buffer.truncate(0)
+    buffer.seek(0)
+    render_chat_help(console, "lifecycle")
+    lifecycle = buffer.getvalue()
+    assert "/approve" in lifecycle
+    assert "/reject" in lifecycle
+
+
+def test_conversational_source_recap_groups_materials() -> None:
+    from council.chat import _human_source_recap
+
+    payload = type(
+        "Payload",
+        (),
+        {
+            "relevance": [
+                SourceRelevanceRecord(
+                    source_pack_id="x",
+                    path="ARCHITECTURE.md",
+                    extension=".md",
+                    score=0.9,
+                ),
+                SourceRelevanceRecord(
+                    source_pack_id="x",
+                    path="ROADMAP.md",
+                    extension=".md",
+                    score=0.8,
+                ),
+            ]
+        },
+    )()
+    recap = _human_source_recap(payload)
+    assert "I reviewed" in recap
+    assert "architecture decisions" in recap or "roadmap and planning docs" in recap
 
 
 @pytest.fixture

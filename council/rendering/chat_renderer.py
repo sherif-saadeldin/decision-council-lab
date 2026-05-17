@@ -8,79 +8,89 @@ from council.models import CouncilRunResult
 from council.verdict_quality import decision_label
 
 
-CHAT_HELP_LINES: tuple[str, ...] = (
-    "── Conversation ──",
-    "(Type naturally. I'll ask a few guided questions, summarize, then run the council.)",
-    "/intake                       — show or start the guided intake",
-    "/edit [field]                 — edit one intake field (goal, mode, context, ...)",
-    "/clear-intake                 — discard the current intake draft",
-    "/mode [name]                  — show or set the decision mode",
-    "/summary                      — show the current intake summary",
-    "/sources                      — list available source packs and active source",
-    "/source scan <path>           — scan a local folder/file into a source pack",
-    "/source use <source_pack_id>  — use a saved source pack in chat council runs",
-    "/source show <source_pack_id> — inspect a source pack",
-    "/source query <question>      — inspect ranked relevance for active source packs",
-    "/source clear                 — clear the active source pack",
+CORE_HELP_LINES: tuple[str, ...] = (
+    "Type naturally and I will guide intake, summarize, and run analysis.",
     "",
-    "── Council ──",
-    "/council <question>          — skip intake; run multi-model council directly",
-    "/run <question>              — single-provider council run",
-    "/compare <question>          — compare mock preset (offline-safe default)",
-    "",
-    "── Runs + lifecycle ──",
-    "/runs                        — list recent runs",
-    "/show <run_id|last>          — inspect a saved run",
-    "/pack <run_id|last> [--allow-unapproved]",
-    "                             — generate implementation pack (approved runs only)",
-    "/approve <run_id|last> [note]   — mark a decision approved",
-    "/reject  <run_id|last> <reason> — mark a decision rejected (reason required)",
-    "/revise  <run_id|last>          — start a contextual follow-up as a revision",
-    "/review  <run_id|last>          — show lifecycle state and review history",
-    "/archive <run_id|last> [note]   — archive a decision",
-    "/context                     — show the active decision context (if any)",
-    "/use <run_id>                — load a previous run as decision context",
-    "/forget                      — clear active decision context and session memory",
-    "/thread                      — show the linked decision chain for the current thread",
-    "",
-    "── Config + health ──",
-    "/doctor [--live|--live-completion]",
-    "                             — health check for the active profile",
-    "/presets                     — list model presets",
-    "/setup                       — interactive setup wizard",
-    "/prompts                     — system prompt inventory",
-    "/profile [name|list]         — show, list, or switch active config profile",
-    "/status                      — active profile, routing, cached health, last run",
-    "/help                        — show this help",
-    "/exit                        — leave chat",
+    "Core commands:",
+    "/council <question>  — run council analysis directly",
+    "/summary             — show your current intake summary",
+    "/source use <name>   — attach source context (alias or id)",
+    "/status              — show detailed session status",
+    "/help advanced       — show all command groups",
+    "/exit                — leave chat",
 )
+
+HELP_SOURCES_LINES: tuple[str, ...] = (
+    "/sources                           — list source packs",
+    "/source scan <path> [alias]        — scan and optionally set an alias",
+    "/source use <alias|id>             — activate source pack",
+    "/source alias <alias|id> <new>     — set or update source alias",
+    "/source show <alias|id>            — inspect source pack details",
+    "/source query <question>           — inspect ranked source relevance",
+    "/source clear                      — clear active source context",
+)
+
+HELP_LIFECYCLE_LINES: tuple[str, ...] = (
+    "/runs                              — list recent runs",
+    "/show <run_id|last>                — inspect a saved run",
+    "/approve <run_id|last> [note]      — approve a decision",
+    "/reject <run_id|last> <reason>     — reject with required reason",
+    "/revise <run_id|last>              — continue as a revision",
+    "/review <run_id|last>              — show review history",
+    "/archive <run_id|last> [note]      — archive a decision",
+    "/pack <run_id|last> [--allow-unapproved] — generate implementation pack",
+)
+
+HELP_ADVANCED_LINES: tuple[str, ...] = (
+    "/intake, /edit, /clear-intake, /mode, /summary",
+    "/run, /compare, /doctor, /profile, /presets, /setup, /prompts, /status",
+    "/context, /use, /forget, /thread",
+    "/help lifecycle, /help sources",
+)
+
+# Backward compatibility for older imports/tests.
+CHAT_HELP_LINES: tuple[str, ...] = CORE_HELP_LINES
 
 
 def render_chat_welcome(
     console: Console,
     *,
-    config_profile_name: str,
-    system_profile: str,
-    routing_mode: str,
     operational_profile: str,
+    active_sources: list[str],
+    has_previous_run: bool,
+    has_active_thread: bool,
     operational_note: str | None = None,
 ) -> None:
-    lines = [
-        f"Running in [cyan]{operational_profile}[/cyan] mode.",
-        f"Conversation profile: [cyan]{config_profile_name}[/cyan]",
-        f"Reasoning style: [cyan]{routing_mode}[/cyan]",
-        f"System profile: [cyan]{system_profile}[/cyan]",
-        "",
-        "Slash commands:",
-        *CHAT_HELP_LINES,
-    ]
+    lines = ["Decision Workspace", f"Running in {operational_profile} mode."]
     if operational_note:
-        lines.insert(1, operational_note)
-    console.print(Panel("\n".join(lines), title="Decision Council Chat", border_style="blue"))
+        lines.append(operational_note)
+    lines.append(f"Active sources: {', '.join(active_sources) if active_sources else 'none'}")
+    awareness: list[str] = []
+    if active_sources:
+        awareness.append("source context")
+    if has_active_thread:
+        awareness.append("active decision thread")
+    if has_previous_run:
+        awareness.append("previous council session")
+    if awareness:
+        lines.append("")
+        lines.append("Continuing work related to:")
+        lines.extend(f"- {item}" for item in awareness)
+    lines.extend(["", "Type naturally to begin.", "Use /help for commands."])
+    console.print("\n".join(lines))
 
 
-def render_chat_help(console: Console) -> None:
-    console.print(Panel("\n".join(CHAT_HELP_LINES), title="Chat help", border_style="blue"))
+def render_chat_help(console: Console, topic: str = "") -> None:
+    key = topic.strip().lower()
+    if key in {"advanced", "all"}:
+        lines = ("Advanced help", "", *CORE_HELP_LINES, "", *HELP_ADVANCED_LINES)
+    elif key == "lifecycle":
+        lines = ("Lifecycle help", "", *HELP_LIFECYCLE_LINES)
+    elif key == "sources":
+        lines = ("Sources help", "", *HELP_SOURCES_LINES)
+    else:
+        lines = ("Help", "", *CORE_HELP_LINES, "", "More: /help sources | /help lifecycle | /help advanced")
+    console.print("\n".join(lines))
 
 
 def render_chat_verdict(console: Console, result: CouncilRunResult) -> None:

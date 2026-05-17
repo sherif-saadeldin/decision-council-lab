@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ class SourceService:
         source_path: Path,
         *,
         name: str | None = None,
+        alias: str | None = None,
         limits: ScanLimits | None = None,
     ) -> SourcePack:
         pack_id = str(uuid4())
@@ -50,6 +52,9 @@ class SourceService:
             source_path=resolved,
             limits=limits,
         )
+        desired_alias = alias or _slugify(pack_name)
+        if desired_alias:
+            pack = pack.model_copy(update={"alias": self._unique_alias(desired_alias)})
         self.save(pack)
         return pack
 
@@ -81,18 +86,44 @@ class SourceService:
         return packs
 
     def load(self, source_pack_id: str) -> SourcePack:
-        path = self._pack_path(source_pack_id)
+        resolved_id = self.resolve_pack_id(source_pack_id)
+        path = self._pack_path(resolved_id)
         if not path.is_file():
             raise ValueError(f"Source pack not found: {source_pack_id}")
         payload = json.loads(path.read_text(encoding="utf-8"))
         return SourcePack.model_validate(payload)
 
     def remove(self, source_pack_id: str) -> bool:
-        path = self._pack_path(source_pack_id)
+        path = self._pack_path(self.resolve_pack_id(source_pack_id))
         if not path.exists():
             return False
         path.unlink()
         return True
+
+    def set_alias(self, source_pack_id: str, alias: str) -> SourcePack:
+        canonical = _normalize_alias(alias)
+        if not canonical:
+            raise ValueError("Alias must contain letters, numbers, or dashes.")
+        pack = self.load(source_pack_id)
+        for other in self.list_packs():
+            if other.source_pack_id == pack.source_pack_id:
+                continue
+            if (other.alias or "").lower() == canonical:
+                raise ValueError(f"Alias already in use: {canonical}")
+        updated = pack.model_copy(update={"alias": canonical})
+        self.save(updated)
+        return updated
+
+    def resolve_pack_id(self, source_pack_id_or_alias: str) -> str:
+        token = source_pack_id_or_alias.strip()
+        direct = self._pack_path(token)
+        if direct.is_file():
+            return token
+        lowered = token.lower()
+        for pack in self.list_packs():
+            if (pack.alias or "").lower() == lowered:
+                return pack.source_pack_id
+        return token
 
     def save(self, pack: SourcePack) -> Path:
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +198,18 @@ class SourceService:
             question=question,
         )
 
+    def _unique_alias(self, desired: str) -> str:
+        base = _normalize_alias(desired)
+        if not base:
+            return ""
+        taken = {(item.alias or "").lower() for item in self.list_packs() if item.alias}
+        if base not in taken:
+            return base
+        index = 2
+        while f"{base}-{index}" in taken:
+            index += 1
+        return f"{base}-{index}"
+
     def _pack_path(self, source_pack_id: str) -> Path:
         return self._base_dir / f"{source_pack_id}.json"
 
@@ -185,4 +228,14 @@ def _atomic_write(path: Path, content: str) -> None:
         handle.write(content)
         temp_name = handle.name
     Path(temp_name).replace(path)
+
+
+def _slugify(text: str) -> str:
+    lowered = text.strip().lower()
+    return _normalize_alias(lowered)
+
+
+def _normalize_alias(text: str) -> str:
+    raw = re.sub(r"[^a-z0-9]+", "-", text.strip().lower())
+    return raw.strip("-")
 

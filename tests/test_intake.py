@@ -216,7 +216,7 @@ def test_format_intake_summary_renders_all_fields() -> None:
     text = format_intake_summary(intake)
     assert "Here's my understanding" in text
     assert "Ship the cache" in text
-    assert "Pressure test" in text
+    assert "Stress-test my assumptions" in text
     assert "- time" in text and "- money" in text
     assert "- adoption stalls" in text
     assert "10 paying users" in text
@@ -233,7 +233,7 @@ def test_format_intake_block_is_stable_for_chair_prompt() -> None:
     # Stable header so chair prompts are reproducible across runs.
     assert block.startswith("Decision intake")
     assert "Goal: Ship the cache" in block
-    assert "Preferred mode: Deep analysis" in block
+    assert "Preferred mode: Careful strategic review" in block
     assert "  - time" in block
 
 
@@ -416,7 +416,7 @@ def test_cmd_intake_shows_summary_when_active(
     session.handle_line("/intake")
     text = out.getvalue()
     assert "Build a startup" in text
-    assert "Deep analysis" in text
+    assert "Careful strategic review" in text
 
 
 def test_cmd_clear_intake_drops_draft(
@@ -439,7 +439,7 @@ def test_cmd_mode_set_via_keyword(
     session.handle_line("/mode risk")
     assert session.state.current_mode == DecisionMode.RISK_REVIEW
     text = out.getvalue()
-    assert "Risk review" in text
+    assert "Risk and downside scan" in text
 
 
 def test_cmd_mode_set_via_number(
@@ -554,7 +554,7 @@ def test_intake_persists_on_council_run_result(
     assert '"intake"' in raw_json
     assert '"Should we ship the cache?"' in raw_json
     assert "## Decision Intake" in raw_md
-    assert "Fast answer" in raw_md
+    assert "Quick directional answer" in raw_md
     # Schema bump landed.
     assert RUN_SCHEMA_VERSION == "1.11"
 
