@@ -524,6 +524,34 @@ def test_handle_line_accepts_bare_slash(chat_ctx) -> None:
     assert session.handle_line("/ ") == "continue"
 
 
+def test_build_chat_context_does_not_leak_cwd_config(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: pre-fix, when a test patched `council.chat.load_config_file`
+    to return None, `build_chat_context` would still re-read
+    `.dcouncil/config.toml` via `resolve_profile_name` inside config_profiles,
+    bypassing the patch. A corrupt cwd config would crash chat fixtures.
+    """
+    cwd_config_dir = tmp_path / ".dcouncil"
+    cwd_config_dir.mkdir()
+    corrupt = cwd_config_dir / "config.toml"
+    corrupt.write_text(
+        'active_profile = "mock"\n'
+        'active_profile = "other"\n'
+        '[profiles.mock]\nmode = "mock"\nprovider_name = "mock"\nmodel = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("council.chat.load_config_file", lambda path=None: None)
+    # Must not raise CorruptConfigFileError — the in-chat load is fully
+    # patched and the second internal load must not fire.
+    ctx = build_chat_context(mock_settings, config_profile_name=None)
+    assert ctx.config is None
+    assert ctx.config_profile is None
+
+
 def test_chat_corrupt_config_surfaces_friendly_message(
     mock_settings: Settings,
     tmp_path: Path,

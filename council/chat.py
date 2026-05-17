@@ -364,7 +364,17 @@ def build_chat_context(
     config_profile_name: str | None = None,
 ) -> ChatContext:
     config = load_config_file()
-    profile_name = config_profile_name or resolve_profile_name(config=config)
+    # NOTE: do NOT call resolve_profile_name(config=config) here when config is
+    # None — that path re-reads .dcouncil/config.toml from cwd via the
+    # config_profiles module-local import, which bypasses test monkeypatches
+    # on `council.chat.load_config_file`. Pre-Slice-5.9.1 this leaked any
+    # real (or corrupt) cwd config into chat-fixture tests.
+    if config_profile_name:
+        profile_name: str | None = config_profile_name
+    elif config is not None:
+        profile_name = config.active_profile
+    else:
+        profile_name = None
     profile: ConfigProfile | None = None
     if profile_name and config is not None:
         try:
