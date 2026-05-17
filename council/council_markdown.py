@@ -121,6 +121,41 @@ def _format_thread_section(lines: list[str], result: CouncilRunResult) -> None:
     lines.append("")
 
 
+def _format_sources_section(lines: list[str], result: CouncilRunResult) -> None:
+    if (
+        not result.source_pack_ids
+        and not result.source_context_summary.strip()
+        and not result.source_relevance
+    ):
+        return
+    lines.extend(["", "## Sources Used", ""])
+    if result.source_pack_ids:
+        for source_pack_id in result.source_pack_ids:
+            lines.append(f"- Source pack: `{source_pack_id}`")
+    if result.source_context_summary.strip():
+        lines.append("- Source context summary:")
+        for raw_line in result.source_context_summary.splitlines():
+            if raw_line.strip():
+                lines.append(f"  - {raw_line.strip()}")
+    lines.append("")
+    if result.source_relevance:
+        lines.extend(["## Source Relevance", ""])
+        for item in result.source_relevance:
+            lines.append(f"- `{item.path}`")
+            lines.append(f"  - score: {item.score:.2f}")
+            if item.matched_terms:
+                lines.append(f"  - matched: {', '.join(item.matched_terms[:8])}")
+            if item.why_selected:
+                lines.append(f"  - why: {', '.join(item.why_selected[:6])}")
+        if result.source_excluded_files:
+            lines.append("- Excluded due to caps:")
+            lines.extend(f"  - {entry}" for entry in result.source_excluded_files[:10])
+        if result.source_context_warnings:
+            lines.append("- Warnings:")
+            lines.extend(f"  - {entry}" for entry in result.source_context_warnings[:5])
+        lines.append("")
+
+
 def _format_cost_estimate_markdown(
     lines: list[str],
     result: CouncilRunResult,
@@ -294,6 +329,7 @@ def format_council_run_markdown(
     _format_intake_section(lines, result)
     _format_review_section(lines, result)
     _format_thread_section(lines, result)
+    _format_sources_section(lines, result)
     _format_cost_estimate_markdown(lines, result)
 
     if result.role_assignments:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from council.config import Settings
@@ -16,7 +18,7 @@ from council.models import CouncilRunResult
 from council.verdict_quality import decision_label, format_verdict_sections_markdown
 
 
-def _format_markdown(result: CouncilRunResult) -> str:
+def _format_standard_markdown(result: CouncilRunResult) -> str:
     dossier = result.dossier
     meta = result.provider_metadata
     confidence_pct = f"{dossier.confidence_score:.0%}"
@@ -80,6 +82,30 @@ def _format_markdown(result: CouncilRunResult) -> str:
             dossier.decision_question,
         ]
     )
+    if result.source_pack_ids or result.source_context_summary.strip():
+        lines.extend(["", "## Sources Used", ""])
+        for source_pack_id in result.source_pack_ids:
+            lines.append(f"- Source pack: `{source_pack_id}`")
+        if result.source_context_summary.strip():
+            lines.append("- Source context summary:")
+            for raw_line in result.source_context_summary.splitlines():
+                if raw_line.strip():
+                    lines.append(f"  - {raw_line.strip()}")
+    if result.source_relevance:
+        lines.extend(["", "## Source Relevance", ""])
+        for item in result.source_relevance:
+            lines.append(f"- `{item.path}`")
+            lines.append(f"  - score: {item.score:.2f}")
+            if item.matched_terms:
+                lines.append(f"  - matched: {', '.join(item.matched_terms[:8])}")
+            if item.why_selected:
+                lines.append(f"  - why: {', '.join(item.why_selected[:6])}")
+        if result.source_excluded_files:
+            lines.append("- Excluded due to caps:")
+            lines.extend(f"  - {entry}" for entry in result.source_excluded_files[:10])
+        if result.source_context_warnings:
+            lines.append("- Warnings:")
+            lines.extend(f"  - {entry}" for entry in result.source_context_warnings[:5])
 
     bullet_section(lines, "Assumptions", dossier.assumptions)
     bullet_section(lines, "Arguments For", dossier.arguments_for)
@@ -110,13 +136,13 @@ def _format_markdown(result: CouncilRunResult) -> str:
         "risk": "risk",
         "operator": "operator",
     }
-    assignment_by_slot = {item.slot: item for item in result.role_assignments}
+    assignment_by_slot = {assignment.slot: assignment for assignment in result.role_assignments}
     for brief in result.agent_briefs:
         slot = slot_by_role.get(brief.role.value)
         model_label = None
         if slot and slot in assignment_by_slot:
-            item = assignment_by_slot[slot]
-            model_label = f"{item.provider_name}/{item.model_name}"
+            assignment = assignment_by_slot[slot]
+            model_label = f"{assignment.provider_name}/{assignment.model_name}"
         format_agent_brief_markdown(lines, brief, model_label=model_label)
 
     return "\n".join(lines).rstrip() + "\n"
@@ -126,6 +152,66 @@ def _is_council_run(result: CouncilRunResult) -> bool:
     return result.council_mode == "multi" or bool(result.role_assignments)
 
 
+def format_run_markdown(
+    result: CouncilRunResult,
+    *,
+    implementation_pack_paths: list[Path] | None = None,
+) -> str:
+    if _is_council_run(result):
+        return format_council_run_markdown(
+            result,
+            implementation_pack_paths=implementation_pack_paths,
+        )
+    return _format_standard_markdown(result)
+
+
+def _atomic_write_text(target: Path, content: str) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=target.name + ".",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def save_run_to_dir(
+    result: CouncilRunResult,
+    runs_dir: Path,
+    *,
+    implementation_pack_paths: list[Path] | None = None,
+) -> tuple[Path, Path]:
+    run_dir = runs_dir / result.dossier.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    json_path = run_dir / "run.json"
+    md_path = run_dir / "run.md"
+
+    payload = result.model_dump(mode="json")
+    _atomic_write_text(
+        json_path,
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+    )
+    _atomic_write_text(
+        md_path,
+        format_run_markdown(
+            result,
+            implementation_pack_paths=implementation_pack_paths,
+        ),
+    )
+
+    return json_path, md_path
+
+
 def save_run(
     result: CouncilRunResult,
     settings: Settings | None = None,
@@ -133,24 +219,8 @@ def save_run(
     implementation_pack_paths: list[Path] | None = None,
 ) -> tuple[Path, Path]:
     settings = settings or Settings.from_env()
-    run_dir = settings.runs_dir / result.dossier.run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-
-    json_path = run_dir / "run.json"
-    md_path = run_dir / "run.md"
-
-    payload = result.model_dump(mode="json")
-    json_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
+    return save_run_to_dir(
+        result,
+        settings.runs_dir,
+        implementation_pack_paths=implementation_pack_paths,
     )
-    if _is_council_run(result):
-        md_text = format_council_run_markdown(
-            result,
-            implementation_pack_paths=implementation_pack_paths,
-        )
-    else:
-        md_text = _format_markdown(result)
-    md_path.write_text(md_text, encoding="utf-8")
-
-    return json_path, md_path

@@ -37,6 +37,7 @@ from council.role_routing import (
 from council.prompt_loader import system_profile_context
 from council.prompt_run import attach_prompt_metadata
 from council.runtime import RunBudgetExceededError, RuntimeOptions
+from council.sources.models import SourceRelevanceRecord
 
 AGENT_ROLE_BY_SLOT: dict[str, AgentRole] = {
     "researcher": AgentRole.RESEARCH,
@@ -81,6 +82,12 @@ class CouncilSessionRequest:
     # Slice 6.0: structured intake collected via guided chat. Prepended to
     # the chair question and persisted as `intake` on CouncilRunResult.
     intake: DecisionIntake | None = None
+    # Slice 6.2: source context injected ahead of the question.
+    source_pack_ids: list[str] | None = None
+    source_context_summary: str = ""
+    source_relevance: list[SourceRelevanceRecord] | None = None
+    source_excluded_files: list[str] | None = None
+    source_context_warnings: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -159,6 +166,12 @@ def run_council_session(
     debug_collector = PromptDebugCollector()
     raw_question = request.question.strip()
     question = raw_question
+    if request.source_context_summary.strip():
+        question = (
+            "Source context:\n"
+            f"{request.source_context_summary.strip()}\n\n"
+            f"Question:\n{raw_question}"
+        )
     # Compose order: intake first (foundational situation), then
     # parent_context (prior decision linkage), then the question itself.
     # Both helpers are deterministic so the chair prompt is stable.
@@ -290,6 +303,11 @@ def _run_council_session_inner(
             cost_estimate=_cost_record(cost_estimate),
             decision_thread=decision_thread,
             intake=request.intake,
+            source_pack_ids=list(request.source_pack_ids or []),
+            source_context_summary=request.source_context_summary.strip(),
+            source_relevance=list(request.source_relevance or []),
+            source_excluded_files=list(request.source_excluded_files or []),
+            source_context_warnings=list(request.source_context_warnings or []),
         ),
         system_profile=runtime.system_profile,
     )

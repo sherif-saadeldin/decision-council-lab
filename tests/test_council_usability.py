@@ -159,7 +159,7 @@ def test_main_runs_list_and_show(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert "run.md" in output
     assert "run.json" in output
     assert "Open:" in output
-    flattened = " ".join(output.split())
-    assert str(summary.md_path.resolve()) in flattened
-    assert str(summary.json_path.resolve()) in flattened
+    normalized = "".join(output.split())
+    assert str(summary.md_path.resolve()).replace(" ", "") in normalized
+    assert str(summary.json_path.resolve()).replace(" ", "") in normalized
     assert "…" not in output

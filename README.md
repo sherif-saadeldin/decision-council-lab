@@ -1,6 +1,35 @@
 # Decision Council Lab
 
-Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Risk / Chair), then the chair produces a decision dossier. Schema 1.7 adds centralized **system prompts** (`council/system_prompts/`), multi-model `council` mode, structured verdict fields (including a one-sentence **Direct Answer** that does not repeat the question), and optional implementation packs.
+Domain-agnostic multi-agent decision council prototype. Specialists research the question, debate in structured rounds (Advocate / Skeptic / Risk / Chair), then the chair produces a decision dossier. Schema 1.11 includes centralized **system prompts** (`council/system_prompts/`), multi-model `council` mode, guided intake, decision threads, review lifecycle, structured verdict fields, optional implementation packs, and local **source packs**.
+
+## Architecture boundary (Slice 6.1)
+
+The app remains Python CLI-first, but orchestration is now routed through an
+application service layer:
+
+```text
+CLI / Chat / future UI
+  -> council/services/*
+  -> council engine + domain models
+  -> RunStore
+  -> filesystem JSON/Markdown artifacts
+```
+
+Current boundaries:
+
+- `council/services/` owns use-case orchestration such as council execution,
+  review transitions, pack generation, run queries, intake transitions, and
+  provider recovery planning.
+- `council/storage/run_store.py` defines `RunStore`; `FileRunStore` keeps the
+  existing `runs/<id>/run.json` and `run.md` layout.
+- `council/rendering/` contains Rich presentation helpers. Services do not use
+  Rich and should be callable by future web/desktop surfaces.
+- `council/chat_state.py` holds chat session state so `chat.py` can remain a
+  coordinator instead of a storage/orchestration god object.
+
+Future UI strategy: keep the Python core and expose service calls to a
+TypeScript web/desktop layer later. Do not rewrite the council engine just to
+add a UI.
 
 ## Setup
 
@@ -50,7 +79,44 @@ uv run python main.py chat
 
 **The conversation is the product. The council is the engine.** Type naturally. Chat opens a guided intake (goal → mode → context → constraints → success → risks), confirms a summary, then runs the council. Results come back human-first: direct answer + three reasons + biggest warning + next step. The full panel is one keystroke away.
 
-Slash commands: `/intake`, `/edit`, `/clear-intake`, `/mode`, `/summary`, `/council` (skip intake), `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/approve`, `/reject`, `/revise`, `/review`, `/archive`, `/help`, `/exit`. `/council Q` is the power-user bypass that skips the intake conversation entirely.
+Slash commands: `/intake`, `/edit`, `/clear-intake`, `/mode`, `/summary`, `/sources`, `/source` (`scan/use/show/clear`), `/council` (skip intake), `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/approve`, `/reject`, `/revise`, `/review`, `/archive`, `/help`, `/exit`. `/council Q` is the power-user bypass that skips the intake conversation entirely.
+
+## Source packs and relevance (Slice 6.3)
+
+Source packs are local-only context bundles for folder/file inputs. They are scanned safely (text files only), summarized with rule-based logic (no embeddings/vector DB), and attached to council prompts as concise redacted context.
+
+```bash
+uv run python main.py sources scan PATH --name my-pack
+uv run python main.py sources list
+uv run python main.py sources show SOURCE_PACK_ID
+uv run python main.py sources query SOURCE_PACK_ID "question"
+uv run python main.py sources remove SOURCE_PACK_ID
+```
+
+Attach sources to runs:
+
+```bash
+uv run python main.py run "Question?" --source-pack SOURCE_PACK_ID
+uv run python main.py run "Question?" --source-path ./docs
+uv run python main.py council "Question?" --source-pack SOURCE_PACK_ID
+```
+
+Deterministic ranking philosophy:
+
+- question-aware scoring uses keyword overlap, filename/path/heading weighting, extension weighting, exact-phrase boosts, and simple frequency scoring
+- ranking is deterministic and inspectable (`score`, `matched terms`, `why selected`) for every selected file
+- no embeddings/vector DB/RAG framework in this slice by design
+
+Safety defaults:
+
+- supported extensions only: `.md`, `.txt`, `.json`, `.csv`, `.yaml`, `.yml`, `.toml`, `.py`, `.js`, `.ts`, `.tsx`
+- binary files skipped
+- symlinks not followed by default
+- max file size + max total source size enforced
+- ignored dirs: `.git`, `node_modules`, `.venv`, `__pycache__`, `dist`, `build`, `runs`, `.dcouncil`
+- secret-like lines are redacted before persistence
+
+Stored packs live at `.dcouncil/sources/<source_pack_id>.json`. Future web upload should map to the same `SourcePack` model; PDF/OCR/vector search are intentionally deferred.
 
 ### Guided decision conversation (Slice 6.0)
 
@@ -483,6 +549,7 @@ uv run python main.py run "Your question" --profile mock
 uv run python main.py run "Your question" --preset mock
 uv run python main.py compare "Your question" --presets mock,ollama-qwen --debate-rounds 1
 uv run python main.py smoke --preset mock
+uv run python main.py sources scan ./docs --name docs-pack
 ```
 
 ### Compare / benchmark
@@ -685,7 +752,7 @@ Each council run is saved under `runs/<run_id>/`:
 
 | File | Purpose |
 |------|---------|
-| `run.json` | Structured record (`schema_version` 1.7, agent briefs, `debate_transcript`, dossier, `prompt_metadata`, optional `role_assignments`) |
+| `run.json` | Structured record (`schema_version` 1.11, agent briefs, `debate_transcript`, dossier, `prompt_metadata`, lifecycle/intake/thread metadata, source relevance metadata) |
 | `run.md` | Human-readable dossier with Debate Transcript (when rounds > 0), Chair Judgment, evidence sections |
 | `prompt_debug.md` | Optional prompt capture when `--save-prompt-debug` is set |
 | `comparisons/<id>/comparison.json` | Multi-preset/profile comparison (from `compare` / `benchmark`) |

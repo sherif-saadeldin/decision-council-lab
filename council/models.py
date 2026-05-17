@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from council.decision_thread import DecisionThreadMeta
     from council.intake import DecisionIntake
     from council.providers.models import ProviderMetadata, ProviderResponse
+    from council.sources.models import SourceRelevanceRecord
 
 
 class AgentRole(str, Enum):
@@ -110,7 +111,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.10"
+RUN_SCHEMA_VERSION = "1.11"
 
 
 class RoleAssignmentRecord(BaseModel):
@@ -166,6 +167,12 @@ class CouncilRunResult(BaseModel):
     # Guided intake snapshot (Slice 6.0). Present when chat collected the
     # user's goal / mode / constraints / etc. before running council.
     intake: "DecisionIntake | None" = None
+    # Slice 6.2: local source packs attached as decision context.
+    source_pack_ids: list[str] = Field(default_factory=list)
+    source_context_summary: str = ""
+    source_relevance: list["SourceRelevanceRecord"] = Field(default_factory=list)
+    source_excluded_files: list[str] = Field(default_factory=list)
+    source_context_warnings: list[str] = Field(default_factory=list)
 
     @property
     def provider_name(self) -> str:
@@ -180,6 +187,7 @@ def _rebuild_models() -> None:
     from council.decision_thread import DecisionThreadMeta
     from council.intake import DecisionIntake
     from council.providers.models import ProviderMetadata, ProviderResponse
+    from council.sources.models import SourceRelevanceRecord
 
     CouncilRunResult.model_rebuild(
         _types_namespace={
@@ -187,6 +195,7 @@ def _rebuild_models() -> None:
             "DecisionIntake": DecisionIntake,
             "ProviderMetadata": ProviderMetadata,
             "ProviderResponse": ProviderResponse,
+            "SourceRelevanceRecord": SourceRelevanceRecord,
         }
     )
 

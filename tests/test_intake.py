@@ -552,7 +552,7 @@ def test_intake_persists_on_council_run_result(
     assert "## Decision Intake" in raw_md
     assert "Fast answer" in raw_md
     # Schema bump landed.
-    assert RUN_SCHEMA_VERSION == "1.10"
+    assert RUN_SCHEMA_VERSION == "1.11"
 
 
 # --- short-form result + opt-in full breakdown -----------------------------

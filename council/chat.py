@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import time
 from collections.abc import Callable
@@ -15,7 +14,6 @@ from rich.panel import Panel
 
 from council.cli import (
     KNOWN_PROJECT_ERRORS,
-    _print_preview_list,
     render_comparison_result,
     render_doctor,
     render_known_error,
@@ -23,9 +21,19 @@ from council.cli import (
     render_prompts_inventory,
     render_runs_list,
     render_runs_show,
+    render_sources_list,
+    render_sources_show,
+    render_sources_query,
 )
 from council.compare import CompareRequest, ComparisonTarget, run_comparison
 from council.config import Settings
+from council.chat_state import (
+    DEFAULT_ROUTING_MODE,
+    DEFAULT_SYSTEM_PROFILE,
+    ChatContext,
+    ChatSessionState,
+    DoctorCacheEntry,
+)
 from council.config_profiles import (
     ConfigProfile,
     CouncilConfigFile,
@@ -39,14 +47,12 @@ from council.config_profiles import (
 )
 from council.decision_thread import (
     CONTEXT_BLOCK_HEADER,
-    DecisionContext,
     looks_like_follow_up,
     summarize_for_context,
 )
 from council.doctor import CheckStatus, DoctorCheck
 from council.intake import (
     DecisionIntake,
-    DecisionMode,
     apply_intake_answer,
     editable_fields,
     empty_intake,
@@ -60,26 +66,20 @@ from council.intake import (
     routing_for_mode,
 )
 from council.provider_availability import (
-    HostedProviderUnavailableError,
     credential_source_for_preset,
     estimate_preset_availability,
     preset_is_hosted,
 )
-from council.recovery import (
-    ClassifiedFailure,
-    classify_for_recovery,
-    format_recovery_lines,
-    is_provider_failure,
-    is_recoverable_with_mock,
+from council.review import ReviewTransitionError
+from council.rendering.chat_renderer import (
+    CHAT_HELP_LINES,
+    render_chat_help,
+    render_chat_verdict,
+    render_chat_verdict_short,
+    render_chat_welcome,
 )
-from council.review import (
-    ReviewTransitionError,
-    approve_run,
-    archive_run,
-    load_run_result as load_run_from_disk,
-    mark_revision_of,
-    reject_run,
-)
+from council.rendering.review_renderer import lifecycle_style, render_review
+from council.rendering.status_renderer import health_style
 from council.review_model import (
     PACK_GATE_BLOCKED_REASON,
     LifecycleState,
@@ -87,25 +87,50 @@ from council.review_model import (
     resolve_actor,
 )
 from council.council_session import (
-    CouncilSessionRequest,
     CouncilSessionResult,
-    plan_council_session,
-    run_council_session,
 )
-from council.costing import enforce_cost_budget
-from council.engine import run_council
-from council.implementation_pack import write_implementation_pack
 from council.models import CouncilRunResult
 from council.progress import NullProgressReporter
 from council.run_catalog import RunNotFoundError, get_run_summary
-from council.runtime import RuntimeOptions
-from council.storage import save_run
-from council.verdict_quality import VerdictQualityError, decision_label, ensure_verdict_quality_for_pack
+from council.services.council_service import ChatCouncilRequest, CouncilRequest, CouncilService
+from council.services.pack_service import PackGenerationBlockedError, PackRequest, PackService
+from council.services.provider_service import ProviderRecoveryRequest, ProviderRecoveryService
+from council.services.review_service import (
+    RejectRequest,
+    ReviewRequest,
+    ReviewService,
+    RevisionRequest,
+)
+from council.services.run_service import RunQuery, RunService
+from council.storage.run_store import FileRunStore
+from council.sources.service import SourceService
+from council.verdict_quality import VerdictQualityError
+
+__all__ = [
+    "APPROVE_NOW_PROMPT",
+    "CHAT_HELP_LINES",
+    "ChatLineKind",
+    "ChatSession",
+    "ChatSessionState",
+    "DoctorCacheEntry",
+    "FALLBACK_PROFILE_NAME",
+    "FALLBACK_PROMPT",
+    "FOLLOW_UP_PROMPT_TEMPLATE",
+    "HEALTH_FAILED",
+    "HEALTH_HEALTHY",
+    "HEALTH_UNCHECKED",
+    "HEALTH_WARNING",
+    "build_chat_context",
+    "looks_like_shell_command",
+    "parse_chat_line",
+    "parse_doctor_args",
+    "render_chat_help",
+    "render_chat_welcome",
+    "run_chat_session",
+    "summarize_doctor_checks",
+]
 
 CHAT_PROMPT = "chat> "
-DEFAULT_ROUTING_MODE = "economy"
-DEFAULT_SYSTEM_PROFILE = "default"
-
 # Shell-like input guard: tokens that almost certainly indicate a user pasted
 # a shell command into chat instead of a question. We refuse these to avoid
 # (a) burning a council run on a paste, and (b) confusing users who expect
@@ -158,47 +183,6 @@ HEALTH_FAILED = "failed"
 FALLBACK_PROMPT = "Fallback to mock profile? [Y/n]"
 FALLBACK_PROFILE_NAME = "mock"
 
-CHAT_HELP_LINES: tuple[str, ...] = (
-    "── Conversation ──",
-    "(Type naturally. I'll ask a few guided questions, summarize, then run the council.)",
-    "/intake                       — show or start the guided intake",
-    "/edit [field]                 — edit one intake field (goal, mode, context, ...)",
-    "/clear-intake                 — discard the current intake draft",
-    "/mode [name]                  — show or set the decision mode",
-    "/summary                      — show the current intake summary",
-    "",
-    "── Council ──",
-    "/council <question>          — skip intake; run multi-model council directly",
-    "/run <question>              — single-provider council run",
-    "/compare <question>          — compare mock preset (offline-safe default)",
-    "",
-    "── Runs + lifecycle ──",
-    "/runs                        — list recent runs",
-    "/show <run_id|last>          — inspect a saved run",
-    "/pack <run_id|last> [--allow-unapproved]",
-    "                             — generate implementation pack (approved runs only)",
-    "/approve <run_id|last> [note]   — mark a decision approved",
-    "/reject  <run_id|last> <reason> — mark a decision rejected (reason required)",
-    "/revise  <run_id|last>          — start a contextual follow-up as a revision",
-    "/review  <run_id|last>          — show lifecycle state and review history",
-    "/archive <run_id|last> [note]   — archive a decision",
-    "/context                     — show the active decision context (if any)",
-    "/use <run_id>                — load a previous run as decision context",
-    "/forget                      — clear active decision context and session memory",
-    "/thread                      — show the linked decision chain for the current thread",
-    "",
-    "── Config + health ──",
-    "/doctor [--live|--live-completion]",
-    "                             — health check for the active profile",
-    "/presets                     — list model presets",
-    "/setup                       — interactive setup wizard",
-    "/prompts                     — system prompt inventory",
-    "/profile [name|list]         — show, list, or switch active config profile",
-    "/status                      — active profile, routing, cached health, last run",
-    "/help                        — show this help",
-    "/exit                        — leave chat",
-)
-
 INTAKE_OPENING_LINE = (
     "Let's think this through together. I'll ask a few quick questions, "
     "summarize what I heard, then run the council."
@@ -247,59 +231,6 @@ class ParsedChatLine:
     args: str = ""
 
 
-@dataclass(frozen=True)
-class DoctorCacheEntry:
-    """Snapshot of the last `/doctor` invocation, used by `/status`."""
-
-    profile_name: str
-    health: str  # one of HEALTH_HEALTHY / WARNING / FAILED
-    ran_at: datetime
-    failed_check_count: int
-    warn_check_count: int
-    ok_check_count: int
-    live: bool
-    live_completion: bool
-    latency_seconds: float | None = None
-    summary: str = ""
-
-
-@dataclass
-class ChatSessionState:
-    last_run_id: str | None = None
-    system_profile: str = DEFAULT_SYSTEM_PROFILE
-    routing_mode: str = DEFAULT_ROUTING_MODE
-    config_profile_name: str | None = None
-    last_doctor: DoctorCacheEntry | None = None
-    last_failure: ClassifiedFailure | None = None
-    # Decision-thread session memory (Slice 5.8). All fields are runtime-only;
-    # nothing here persists across chat sessions.
-    last_question: str | None = None
-    last_direct_answer: str | None = None
-    last_decision_type: str | None = None
-    last_pack_paths: list[Path] = field(default_factory=list)
-    last_profile: str | None = None
-    last_routing_mode: str | None = None
-    current_context_run_id: str | None = None
-    current_context: DecisionContext | None = None
-    current_thread_id: str | None = None
-    # Slice 6.0: guided intake draft. `current_intake` is the in-flight
-    # DecisionIntake; `current_intake_field` is the field currently
-    # awaiting an answer. `current_mode` mirrors intake.preferred_mode and
-    # also accepts standalone `/mode` updates outside an intake.
-    current_intake: DecisionIntake | None = None
-    current_intake_field: str | None = None
-    current_mode: DecisionMode | None = None
-    last_intake: DecisionIntake | None = None  # snapshot of the last completed intake
-
-
-@dataclass(frozen=True)
-class ChatContext:
-    settings: Settings
-    config: CouncilConfigFile | None
-    config_profile: ConfigProfile | None
-    runtime: RuntimeOptions
-
-
 def parse_chat_line(line: str) -> ParsedChatLine:
     text = line.strip()
     if not text:
@@ -340,23 +271,12 @@ def summarize_doctor_checks(checks: list[DoctorCheck]) -> tuple[str, int, int, i
 
 
 def _health_style(health: str) -> str:
-    return {
-        HEALTH_HEALTHY: "green",
-        HEALTH_WARNING: "yellow",
-        HEALTH_FAILED: "red",
-    }.get(health, "dim")
+    return health_style(health)
 
 
 def _lifecycle_style(status: str) -> str:
     """Rich style for a lifecycle label. Mirrors `cli._lifecycle_label`."""
-    return {
-        LifecycleState.DRAFT.value: "dim",
-        LifecycleState.UNDER_REVIEW.value: "yellow",
-        LifecycleState.APPROVED.value: "green",
-        LifecycleState.REJECTED.value: "red",
-        LifecycleState.SUPERSEDED.value: "magenta",
-        LifecycleState.ARCHIVED.value: "dim",
-    }.get(status, "white")
+    return lifecycle_style(status)
 
 
 def _thread_markers(item, *, thread_id: str) -> list[str]:
@@ -450,86 +370,8 @@ def build_chat_context(
     )
 
 
-def render_chat_welcome(
-    console: Console,
-    *,
-    config_profile_name: str,
-    system_profile: str,
-    routing_mode: str,
-) -> None:
-    lines = [
-        f"Config profile: [cyan]{config_profile_name}[/cyan]",
-        f"System profile: [cyan]{system_profile}[/cyan]",
-        f"Routing mode: [cyan]{routing_mode}[/cyan] (council default)",
-        "",
-        "Slash commands:",
-        *CHAT_HELP_LINES,
-    ]
-    console.print(Panel("\n".join(lines), title="Decision Council Chat", border_style="blue"))
-
-
-def render_chat_help(console: Console) -> None:
-    console.print(Panel("\n".join(CHAT_HELP_LINES), title="Chat help", border_style="blue"))
-
-
-def render_chat_verdict(console: Console, result: CouncilRunResult) -> None:
-    dossier = result.dossier
-    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
-    decision_type = decision_label(dossier.decision_type)
-    console.print(
-        Panel.fit(
-            f"[bold]{direct}[/bold]\n\n"
-            f"Decision: {decision_type}\n"
-            f"Run ID: [cyan]{dossier.run_id}[/cyan]",
-            title="Direct Answer",
-            border_style="green",
-        )
-    )
-    _print_preview_list(console, "Do next", dossier.next_actions)
-    _print_preview_list(console, "Do not do", dossier.do_not_do)
-    if dossier.approval_gate.strip():
-        console.print(f"[bold]Approval gate[/bold]\n  {dossier.approval_gate.strip()}\n")
-
-
-def render_chat_verdict_short(console: Console, result: CouncilRunResult) -> None:
-    """Slice 6.0: human-first verdict. Three reasons, biggest warning,
-    next step — then ask if the user wants the full breakdown."""
-    dossier = result.dossier
-    direct = dossier.direct_answer.strip() or dossier.recommendation.split("\n", 1)[0]
-    reasons = [r for r in dossier.why_this_decision[:3] if r.strip()]
-    warning = ""
-    if dossier.do_not_do:
-        warning = dossier.do_not_do[0].strip()
-    elif dossier.risks:
-        warning = dossier.risks[0].strip()
-    next_step = dossier.next_actions[0].strip() if dossier.next_actions else ""
-    body_lines = [f"[bold]{direct}[/bold]", ""]
-    if reasons:
-        body_lines.append("Why:")
-        for r in reasons:
-            body_lines.append(f"  • {r}")
-        body_lines.append("")
-    if warning:
-        body_lines.append(f"Biggest warning: {warning}")
-    if next_step:
-        body_lines.append(f"Next step: {next_step}")
-    body_lines.append("")
-    body_lines.append(f"Run ID: [cyan]{dossier.run_id}[/cyan]")
-    console.print(
-        Panel.fit(
-            "\n".join(body_lines),
-            title="Direct Answer",
-            border_style="green",
-        )
-    )
-
-
 def load_run_result(runs_dir: Path, run_id: str) -> CouncilRunResult:
-    json_path = runs_dir / run_id / "run.json"
-    if not json_path.is_file():
-        raise RunNotFoundError(run_id, runs_dir)
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
-    return CouncilRunResult.model_validate(payload)
+    return FileRunStore(runs_dir).load_run(run_id)
 
 
 def resolve_run_id_arg(state: ChatSessionState, arg: str) -> str | None:
@@ -556,6 +398,24 @@ class ChatSession:
     council_runner: Callable[..., CouncilSessionResult] | None = None
     doctor_runner: Callable[..., list] | None = None
     setup_runner: Callable[..., object] | None = None  # SetupResult from council.setup
+
+    def _store(self) -> FileRunStore:
+        return FileRunStore(self.ctx.settings.runs_dir)
+
+    def _council_service(self) -> CouncilService:
+        return CouncilService(self._store())
+
+    def _review_service(self) -> ReviewService:
+        return ReviewService(self._store())
+
+    def _pack_service(self) -> PackService:
+        return PackService(self._store())
+
+    def _run_service(self) -> RunService:
+        return RunService(self._store())
+
+    def _source_service(self) -> SourceService:
+        return SourceService()
 
     def handle_line(self, line: str) -> Literal["continue", "exit"]:
         parsed = parse_chat_line(line)
@@ -786,6 +646,8 @@ class ChatSession:
             "clear_intake": lambda _a: self._cmd_clear_intake(),  # accept either form
             "mode": self._cmd_mode,
             "summary": lambda _a: self._cmd_summary(),
+            "sources": lambda _a: self._cmd_sources(),
+            "source": self._cmd_source,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -808,17 +670,25 @@ class ChatSession:
         failures, optionally offers a one-keystroke fallback to mock and
         retries the original action under the new profile."""
         render_known_error(self.error_console, exc, quiet=False)
-        if not is_provider_failure(exc):
+        recovery = ProviderRecoveryService().analyze(
+            ProviderRecoveryRequest(
+                exc=exc,
+                config_profile_name=self.state.config_profile_name,
+                config_profile=self.ctx.config_profile,
+                fallback_profile_name=FALLBACK_PROFILE_NAME,
+            )
+        )
+        if not recovery.is_provider_failure:
             # Non-provider known error (e.g. ConfigProfileError) — no recovery loop.
             return
-        failure = classify_for_recovery(exc)
+        failure = recovery.failure
+        assert failure is not None
         self.state.last_failure = failure
-        reason, fix, suggestions = format_recovery_lines(failure)
-        self.error_console.print(reason, style="yellow")
-        self.error_console.print(fix, style="yellow")
-        self.error_console.print(suggestions, style="yellow")
+        self.error_console.print(recovery.reason, style="yellow")
+        self.error_console.print(recovery.fix, style="yellow")
+        self.error_console.print(recovery.suggestions, style="yellow")
 
-        if not self._should_offer_fallback(exc, failure):
+        if not recovery.offer_fallback:
             return
         if not self.confirm_fn(FALLBACK_PROMPT, True):
             self.console.print("[dim]Staying on the current profile.[/dim]")
@@ -834,13 +704,6 @@ class ChatSession:
             retry()
         except KNOWN_PROJECT_ERRORS as exc2:
             render_known_error(self.error_console, exc2, quiet=False)
-
-    def _should_offer_fallback(self, exc: Exception, failure: ClassifiedFailure) -> bool:
-        if self.state.config_profile_name == FALLBACK_PROFILE_NAME:
-            return False
-        if not (isinstance(exc, HostedProviderUnavailableError) or self._is_hosted_failure(exc)):
-            return False
-        return is_recoverable_with_mock(failure)
 
     def _switch_to_fallback_profile(self) -> bool:
         """Switch active profile to mock. Returns True on success."""
@@ -869,26 +732,6 @@ class ChatSession:
             f"[green]Switched to[/green] [cyan]{FALLBACK_PROFILE_NAME}[/cyan]."
         )
         return True
-
-    def _is_hosted_failure(self, exc: Exception) -> bool:
-        """Best-effort: does this error stem from a hosted provider config?"""
-        try:
-            from council.providers.errors import (
-                MissingProviderCredentialError,
-                ProviderResponseError,
-            )
-        except ImportError:
-            return False
-        if not isinstance(exc, (MissingProviderCredentialError, ProviderResponseError)):
-            return False
-        profile = self.ctx.config_profile
-        if profile is None:
-            return False
-        # Heuristic: profile uses a hosted preset, or hosted mode (openai/openai_compatible)
-        if profile.preset and preset_is_hosted(profile.preset):
-            return True
-        mode = (profile.mode or "").lower()
-        return mode in {"openai", "openai_compatible"}
 
     def _cmd_exit(self) -> Literal["exit"]:
         self.console.print("Goodbye.")
@@ -1177,6 +1020,7 @@ class ChatSession:
             f"  ({health_detail})",
             f"Last doctor    : [cyan]{ran_at}[/cyan]",
             f"Last run id    : [cyan]{last_run}[/cyan]",
+            f"Active sources : [cyan]{', '.join(self.state.active_source_pack_ids) or '—'}[/cyan]",
         ]
         if self.state.last_failure is not None:
             lines.append(
@@ -1200,7 +1044,7 @@ class ChatSession:
             self.error_console.print("No run ID. Run council first or pass /pack RUN_ID.", style="red")
             return "continue"
         try:
-            result = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+            result = self._run_service().load(RunQuery(run_id))
         except RunNotFoundError as exc:
             self.error_console.print(str(exc), style="red")
             return "continue"
@@ -1211,13 +1055,13 @@ class ChatSession:
             self.console.print("[dim]Pack generation cancelled.[/dim]")
             return "continue"
         try:
-            ensure_verdict_quality_for_pack(result.dossier)
-            run_dir = self.ctx.settings.runs_dir / run_id
-            paths = write_implementation_pack(run_dir, result)
+            pack = self._pack_service().generate(
+                PackRequest(run_id=run_id, allow_unapproved=override)
+            )
             self.console.print("[green]Implementation pack:[/green]")
-            for path in paths:
+            for path in pack.paths:
                 self.console.print(f"  {path}")
-        except VerdictQualityError as exc:
+        except (PackGenerationBlockedError, VerdictQualityError) as exc:
             render_known_error(self.error_console, exc, quiet=False)
         return "continue"
 
@@ -1250,11 +1094,8 @@ class ChatSession:
         if not run_id:
             return "continue"
         try:
-            updated = approve_run(
-                self.ctx.settings.runs_dir,
-                run_id,
-                actor=resolve_actor(),
-                note=note,
+            updated = self._review_service().approve(
+                ReviewRequest(run_id=run_id, actor=resolve_actor(), note=note)
             )
         except (RunNotFoundError, ReviewTransitionError) as exc:
             self.error_console.print(str(exc), style="red")
@@ -1279,11 +1120,8 @@ class ChatSession:
             )
             return "continue"
         try:
-            updated = reject_run(
-                self.ctx.settings.runs_dir,
-                run_id,
-                actor=resolve_actor(),
-                note=note,
+            updated = self._review_service().reject(
+                RejectRequest(run_id=run_id, actor=resolve_actor(), reason=note)
             )
         except (RunNotFoundError, ReviewTransitionError) as exc:
             self.error_console.print(str(exc), style="red")
@@ -1298,11 +1136,8 @@ class ChatSession:
         if not run_id:
             return "continue"
         try:
-            updated = archive_run(
-                self.ctx.settings.runs_dir,
-                run_id,
-                actor=resolve_actor(),
-                note=note,
+            updated = self._review_service().archive(
+                ReviewRequest(run_id=run_id, actor=resolve_actor(), note=note)
             )
         except (RunNotFoundError, ReviewTransitionError) as exc:
             self.error_console.print(str(exc), style="red")
@@ -1317,46 +1152,11 @@ class ChatSession:
         if not run_id:
             return "continue"
         try:
-            result = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+            result = self._review_service().load(run_id)
         except RunNotFoundError as exc:
             self.error_console.print(str(exc), style="red")
             return "continue"
-        review = result.review
-        thread = result.decision_thread
-        status_style = _lifecycle_style(review.status.value)
-        lines = [
-            f"Run ID    : [cyan]{run_id}[/cyan]",
-            f"Status    : [{status_style}]{review.status.value}[/{status_style}]",
-        ]
-        if review.approved_by:
-            lines.append(f"Approved  : {review.approved_by}")
-        if review.rejected_by:
-            lines.append(f"Rejected  : {review.rejected_by}")
-        if review.review_reason:
-            lines.append(f"Note      : {review.review_reason}")
-        if review.reviewed_at:
-            lines.append(
-                f"Reviewed  : {review.reviewed_at.strftime('%Y-%m-%d %H:%M:%SZ')}"
-            )
-        if review.is_revision_of:
-            lines.append(f"Revision of : [cyan]{review.is_revision_of}[/cyan]")
-        if review.superseded_by_run_id:
-            lines.append(
-                f"Superseded by: [cyan]{review.superseded_by_run_id}[/cyan]"
-            )
-        if thread is not None:
-            lines.append(f"Thread    : [cyan]{thread.thread_id}[/cyan]")
-            lines.append(f"Parent    : [cyan]{thread.parent_run_id}[/cyan]")
-        if review.history:
-            lines.append("")
-            lines.append("History:")
-            for event in review.history:
-                ts = event.timestamp.strftime("%Y-%m-%d %H:%M:%SZ")
-                note = f" — {event.note}" if event.note else ""
-                lines.append(f"  {ts}  {event.action.value} by {event.actor}{note}")
-        self.console.print(
-            Panel("\n".join(lines), title="Decision Review", border_style="blue")
-        )
+        render_review(self.console, run_id, result)
         return "continue"
 
     def _cmd_revise(self, args: str) -> Literal["continue", "exit"]:
@@ -1364,7 +1164,7 @@ class ChatSession:
         if not run_id:
             return "continue"
         try:
-            parent = load_run_from_disk(self.ctx.settings.runs_dir, run_id)
+            parent = self._review_service().load(run_id)
         except RunNotFoundError as exc:
             self.error_console.print(str(exc), style="red")
             return "continue"
@@ -1399,12 +1199,13 @@ class ChatSession:
         new_run_id = self.state.last_run_id
         if new_run_id and new_run_id != parent.dossier.run_id:
             try:
-                mark_revision_of(
-                    self.ctx.settings.runs_dir,
-                    new_run_id,
-                    parent.dossier.run_id,
-                    actor=resolve_actor(),
-                    note="Created via /revise.",
+                self._review_service().mark_revision(
+                    RevisionRequest(
+                        run_id=new_run_id,
+                        parent_run_id=parent.dossier.run_id,
+                        actor=resolve_actor(),
+                        note="Created via /revise.",
+                    )
                 )
                 self.console.print(
                     f"[cyan]Marked {new_run_id} as a revision of {parent.dossier.run_id}.[/cyan] "
@@ -1423,14 +1224,33 @@ class ChatSession:
             cli_debate_rounds=None,
             runtime=self.ctx.runtime,
         )
-        result, _ = run_council(
-            question,
-            settings=self.ctx.settings,
-            debate_rounds=debate_rounds,
-            runtime=self.ctx.runtime,
-            progress=NullProgressReporter(),
+        source_payload = self._source_service().build_context(
+            source_pack_ids=self.state.active_source_pack_ids,
+            question=question,
+            intake_summary=format_intake_summary(self.state.last_intake) if self.state.last_intake else "",
+            decision_mode=self.state.current_mode.value if self.state.current_mode else "",
         )
-        _, md_path = save_run(result, settings=self.ctx.settings)
+        if source_payload.summary:
+            self.console.print(
+                "[cyan]Using source context:[/cyan] "
+                + ", ".join(item.path for item in source_payload.relevance[:3])
+            )
+        execution = self._council_service().run_standard(
+            CouncilRequest(
+                question=question,
+                settings=self.ctx.settings,
+                debate_rounds=debate_rounds,
+                runtime=self.ctx.runtime,
+                progress=NullProgressReporter(),
+                source_pack_ids=source_payload.source_pack_ids,
+                source_context_summary=source_payload.summary,
+                source_relevance=source_payload.relevance,
+                source_excluded_files=source_payload.excluded_files,
+                source_context_warnings=source_payload.warnings,
+            )
+        )
+        result = execution.result
+        md_path = execution.md_path
         self.state.last_run_id = result.dossier.run_id
         render_chat_verdict(self.console, result)
         self.console.print(f"[green]Saved:[/green] {md_path}")
@@ -1473,29 +1293,6 @@ class ChatSession:
         return "continue"
 
     def _run_council(self, question: str, *, intake: DecisionIntake | None = None) -> None:
-        from council.routing_modes import resolve_debate_rounds
-
-        # Slice 6.0: if an intake's mode prefers a specific debate count,
-        # use that as the default unless an explicit profile override exists.
-        intake_mode_profile = (
-            mode_profile(intake.preferred_mode)
-            if intake is not None and intake.preferred_mode is not None
-            else None
-        )
-        profile_default = resolve_debate_rounds_with_profile(
-            self.ctx.config_profile,
-            cli_debate_rounds=None,
-            runtime=self.ctx.runtime,
-        )
-        debate_rounds = resolve_debate_rounds(
-            self.state.routing_mode,
-            cli_debate_rounds=(
-                intake_mode_profile.debate_rounds
-                if intake_mode_profile is not None
-                else profile_default
-            ),
-            max_debate_rounds=None,
-        )
         context = self.state.current_context
         if context is not None:
             self.console.print(
@@ -1505,42 +1302,40 @@ class ChatSession:
             self.console.print(
                 "[cyan]Using guided intake context (goal, constraints, mode).[/cyan]"
             )
-        request = CouncilSessionRequest(
+        source_payload = self._source_service().build_context(
+            source_pack_ids=self.state.active_source_pack_ids,
             question=question,
-            routing_mode=self.state.routing_mode,
-            debate_rounds=debate_rounds,
-            base_settings=self.ctx.settings,
-            runtime=self.ctx.runtime,
-            prompt_create_pack=False,
-            create_pack=False,
-            parent_context=context,
-            parent_run_id=(context.run_id if context is not None else None),
-            thread_id=self.state.current_thread_id,
-            intake=intake,
+            intake_summary=format_intake_summary(intake) if intake is not None else "",
+            decision_mode=self.state.current_mode.value if self.state.current_mode else "",
         )
-        plan = plan_council_session(request)
-        enforce_cost_budget(
-            plan.cost_estimate,
-            max_cost_usd=request.max_cost_usd,
-            max_llm_calls=request.max_llm_calls,
-            allow_over_budget=request.allow_over_budget,
+        if source_payload.summary:
+            self.console.print(
+                "[cyan]Using source context:[/cyan] "
+                + ", ".join(item.path for item in source_payload.relevance[:3])
+            )
+        execution = self._council_service().run_chat_council(
+            ChatCouncilRequest(
+                question=question,
+                routing_mode=self.state.routing_mode,
+                settings=self.ctx.settings,
+                runtime=self.ctx.runtime,
+                config_profile=self.ctx.config_profile,
+                parent_context=context,
+                thread_id=self.state.current_thread_id,
+                intake=intake,
+                council_runner=self.council_runner,
+                source_pack_ids=source_payload.source_pack_ids,
+                source_context_summary=source_payload.summary,
+                source_relevance=source_payload.relevance,
+                source_excluded_files=source_payload.excluded_files,
+                source_context_warnings=source_payload.warnings,
+            )
         )
-        if self.council_runner is not None:
-            session = self.council_runner(
-                request,
-                progress=NullProgressReporter(),
-                plan=plan,
-            )
-        else:
-            session = run_council_session(
-                request,
-                progress=NullProgressReporter(),
-                plan=plan,
-            )
+        session = execution.session
 
         # Decision starts as draft. Persist first so /approve has something
         # to load from disk if the user accepts the inline approval prompt.
-        _, md_path = save_run(session.result, settings=self.ctx.settings)
+        md_path = execution.md_path
         self._record_session_memory(question, session.result, pack_paths=[])
         # Slice 6.0: human-first result. Show the short form by default;
         # the full panel is one confirm away.
@@ -1554,15 +1349,18 @@ class ChatSession:
         )
 
         approved = False
+        approved_result = session.result
         if self.confirm_fn(APPROVE_NOW_PROMPT, False):
             try:
-                updated = approve_run(
-                    self.ctx.settings.runs_dir,
-                    session.result.dossier.run_id,
-                    actor=resolve_actor(),
-                    note="Approved inline after council run.",
+                updated = self._review_service().approve(
+                    ReviewRequest(
+                        run_id=session.result.dossier.run_id,
+                        actor=resolve_actor(),
+                        note="Approved inline after council run.",
+                    )
                 )
                 approved = updated.review.status == LifecycleState.APPROVED
+                approved_result = updated
                 self.console.print(
                     f"[green]Approved by[/green] [cyan]{updated.review.approved_by}[/cyan]."
                 )
@@ -1577,17 +1375,13 @@ class ChatSession:
                 self._print_pack_gate_hint()
             else:
                 try:
-                    ensure_verdict_quality_for_pack(session.result.dossier)
-                    run_dir = self.ctx.settings.runs_dir / session.result.dossier.run_id
-                    run_dir.mkdir(parents=True, exist_ok=True)
-                    pack_paths = write_implementation_pack(run_dir, session.result)
-                    save_run(
-                        session.result,
-                        settings=self.ctx.settings,
-                        implementation_pack_paths=pack_paths or None,
+                    pack = self._pack_service().generate_for_result(
+                        approved_result,
+                        resave_run_with_pack_paths=True,
                     )
+                    pack_paths = pack.paths
                     self.console.print("[green]Implementation pack written.[/green]")
-                except VerdictQualityError as exc:
+                except (PackGenerationBlockedError, VerdictQualityError) as exc:
                     render_known_error(self.error_console, exc, quiet=False)
         if pack_paths:
             self.state.last_pack_paths = list(pack_paths)
@@ -1714,15 +1508,13 @@ class ChatSession:
         return "continue"
 
     def _cmd_thread(self) -> Literal["continue", "exit"]:
-        from council.run_catalog import list_thread_runs
-
         thread_id = self.state.current_thread_id
         if thread_id is None:
             self.console.print(
                 "No active thread. Run council or `/use RUN_ID` to start a thread."
             )
             return "continue"
-        runs = list_thread_runs(self.ctx.settings.runs_dir, thread_id)
+        runs = self._run_service().thread_runs(thread_id)
         if not runs:
             self.console.print(
                 f"No persisted runs found for thread [cyan]{thread_id}[/cyan]."
@@ -1845,6 +1637,72 @@ class ChatSession:
         profile = mode_profile(parsed)
         self.console.print(
             f"[green]Mode set to[/green] [cyan]{profile.label}[/cyan]: {profile.description}"
+        )
+        return "continue"
+
+    def _cmd_sources(self) -> Literal["continue", "exit"]:
+        render_sources_list(self.console, self._source_service().list_packs())
+        if self.state.active_source_pack_ids:
+            self.console.print(
+                f"Active source packs: {', '.join(self.state.active_source_pack_ids)}"
+            )
+        return "continue"
+
+    def _cmd_source(self, args: str) -> Literal["continue", "exit"]:
+        tokens = args.split(maxsplit=2)
+        if not tokens:
+            self.error_console.print(
+                "Usage: /source scan <path> | use <id> | clear | show <id> | query <question>",
+                style="red",
+            )
+            return "continue"
+        sub = tokens[0].lower()
+        service = self._source_service()
+        if sub == "scan":
+            if len(tokens) < 2:
+                self.error_console.print("Usage: /source scan <path>", style="red")
+                return "continue"
+            pack = service.scan_and_save(Path(tokens[1]))
+            self.state.active_source_pack_ids = [pack.source_pack_id]
+            render_sources_show(self.console, pack)
+            self.console.print(f"[green]Active source pack:[/green] {pack.source_pack_id}")
+            return "continue"
+        if sub == "use":
+            if len(tokens) < 2:
+                self.error_console.print("Usage: /source use <source_pack_id>", style="red")
+                return "continue"
+            pack = service.load(tokens[1])
+            self.state.active_source_pack_ids = [pack.source_pack_id]
+            self.console.print(f"[green]Active source pack:[/green] {pack.source_pack_id}")
+            return "continue"
+        if sub == "clear":
+            self.state.active_source_pack_ids = []
+            self.console.print("[dim]Cleared active source packs.[/dim]")
+            return "continue"
+        if sub == "show":
+            if len(tokens) < 2:
+                self.error_console.print("Usage: /source show <source_pack_id>", style="red")
+                return "continue"
+            render_sources_show(self.console, service.load(tokens[1]))
+            return "continue"
+        if sub == "query":
+            question = args[len(tokens[0]) :].strip()
+            if not question:
+                self.error_console.print("Usage: /source query <question>", style="red")
+                return "continue"
+            if not self.state.active_source_pack_ids:
+                self.error_console.print("No active source pack. Use /source use <id> first.", style="red")
+                return "continue"
+            for source_pack_id in self.state.active_source_pack_ids:
+                payload = service.build_context(
+                    source_pack_ids=[source_pack_id],
+                    question=question,
+                )
+                render_sources_query(self.console, source_pack_id, payload)
+            return "continue"
+        self.error_console.print(
+            "Usage: /source scan <path> | use <id> | clear | show <id> | query <question>",
+            style="red",
         )
         return "continue"
 

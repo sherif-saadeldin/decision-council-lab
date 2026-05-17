@@ -111,3 +111,45 @@ def test_mock_mode_still_works_via_cli(capsys) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         code = main(["Mock CLI test?", "--runs-dir", tmp, "--quiet"])
     assert code == 0
+
+
+def test_sources_parser_exists() -> None:
+    args = parse_args(["sources", "list"])
+    assert args.command == "sources"
+    assert args.sources_command == "list"
+
+
+def test_sources_query_parser_exists() -> None:
+    args = parse_args(["sources", "query", "pack-1", "Should we ship?"])
+    assert args.command == "sources"
+    assert args.sources_command == "query"
+    assert args.source_pack_id == "pack-1"
+
+
+def test_run_parser_accepts_source_flags() -> None:
+    args = parse_args(
+        [
+            "run",
+            "Should we ship?",
+            "--source-pack",
+            "abc",
+            "--source-path",
+            "docs",
+        ]
+    )
+    assert args.source_packs == ["abc"]
+    assert args.source_paths == ["docs"]
+
+
+def test_sources_commands_scan_list_show_remove(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.md").write_text("# Title\nhello", encoding="utf-8")
+    code = main(["sources", "scan", str(tmp_path / "docs"), "--name", "docs-pack"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Source pack" in out
+    code = main(["sources", "list"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "docs-pack" in out

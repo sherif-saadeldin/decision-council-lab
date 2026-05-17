@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from rich.console import Console
@@ -29,6 +30,10 @@ from council.cli import (
     render_secrets_get,
     render_secrets_list,
     render_secrets_set,
+    render_sources_list,
+    render_sources_query,
+    render_sources_remove,
+    render_sources_show,
     render_prompts_inventory,
     render_version,
     resolve_debate_rounds,
@@ -39,17 +44,19 @@ from council.cli import (
 from council.compare import run_comparison
 from council.config import Settings
 from council.costing import enforce_cost_budget
-from council.council_session import plan_council_session, run_council_session
+from council.council_session import run_council_session
 from council.setup import run_setup
 from council.smoke import run_smoke
 from council.doctor import run_doctor
 from council.engine import run_council
-from council.implementation_pack import write_implementation_pack
-from council.verdict_quality import ensure_verdict_quality_for_pack
 from council.progress import ConsoleProgressReporter, NullProgressReporter
-from council.prompt_debug import save_prompt_debug
-from council.run_catalog import RunNotFoundError, get_run_summary
-from council.storage import save_run
+from council.run_catalog import RunNotFoundError
+from council.services.council_service import CouncilRequest, CouncilService, MultiCouncilRequest
+from council.services.pack_service import PackGenerationBlockedError, PackRequest, PackService
+from council.services.review_service import RejectRequest, ReviewRequest, ReviewService
+from council.services.run_service import RunQuery, RunService
+from council.storage.run_store import FileRunStore
+from council.sources.service import SourceService
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -122,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     if command == "chat":
         return _chat_command(args, console, error_console)
 
+    if command == "sources":
+        return _sources_command(args, console, error_console)
+
     # Slice 5.10: lifecycle verbs reachable from CI / scripts.
     if command == "approve":
         return _approve_command(args, console, error_console)
@@ -136,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
 
     error_console.print(
         "Unknown command. Use: run, council, chat, runs, compare, smoke, setup, presets, "
-        "prompts, doctor, version, config, secrets, approve, reject, archive, review, pack.",
+        "prompts, doctor, version, config, secrets, approve, reject, archive, review, pack, sources.",
         style="red",
     )
     return 1
@@ -161,6 +171,16 @@ def _compare_command(args, console: Console, error_console: Console) -> int:
 
     try:
         request = build_compare_request(args)
+        source_payload = _resolve_source_payload(args)
+        if source_payload.summary:
+            request = replace(
+                request,
+                question=(
+                    "Source context:\n"
+                    f"{source_payload.summary}\n\n"
+                    f"Question:\n{request.question}"
+                ),
+            )
         report, json_path, md_path = run_comparison(request)
         render_comparison_result(
             console,
@@ -185,49 +205,41 @@ def _run_command(args, console: Console, error_console: Console) -> int:
     try:
         settings = resolve_settings(args)
         runtime = resolve_runtime_options(args)
+        source_payload = _resolve_source_payload(args)
         debate_rounds = resolve_debate_rounds(args, runtime)
         progress = (
             ConsoleProgressReporter(console, enabled=runtime.show_progress)
             if runtime.show_progress
             else NullProgressReporter()
         )
-
-        result, debug_collector = run_council(
-            question,
-            settings=settings,
-            debate_rounds=debate_rounds,
-            save_prompt_debug=args.save_prompt_debug,
-            runtime=runtime,
-            progress=progress,
+        service = CouncilService(
+            FileRunStore(settings.runs_dir),
+            run_council_fn=run_council,
         )
-
-        if progress is not None and runtime.show_progress:
-            progress.on_stage("storage")
-
-        json_path, md_path = save_run(result, settings=settings)
-
-        prompt_debug_path = None
-        if args.save_prompt_debug and debug_collector is not None:
-            secrets = [
-                key
-                for key in (settings.openai_api_key, settings.llm_api_key)
-                if key
-            ]
-            prompt_debug_path = save_prompt_debug(
-                result,
-                debug_collector,
-                settings.runs_dir,
-                secrets=secrets,
+        execution = service.run_standard(
+            CouncilRequest(
+                question=question,
+                settings=settings,
+                runtime=runtime,
+                debate_rounds=debate_rounds,
+                save_prompt_debug=args.save_prompt_debug,
+                progress=progress,
+                source_pack_ids=source_payload.source_pack_ids,
+                source_context_summary=source_payload.summary,
+                source_relevance=source_payload.relevance,
+                source_excluded_files=source_payload.excluded_files,
+                source_context_warnings=source_payload.warnings,
             )
+        )
 
         render_result(
             console,
-            result,
-            json_path,
-            md_path,
+            execution.result,
+            execution.json_path,
+            execution.md_path,
             quiet=args.quiet,
             runs_dir=settings.runs_dir,
-            prompt_debug_path=prompt_debug_path,
+            prompt_debug_path=execution.prompt_debug_path,
             fast_mode=runtime.fast_mode,
         )
         return 0
@@ -239,12 +251,13 @@ def _run_command(args, console: Console, error_console: Console) -> int:
 def _runs_command(args, console: Console, error_console: Console) -> int:
     try:
         runs_dir = resolve_runs_dir(args)
+        service = RunService(FileRunStore(runs_dir))
         sub = getattr(args, "runs_command", None)
         if sub == "list":
             render_runs_list(console, runs_dir)
             return 0
         if sub == "show":
-            summary = get_run_summary(runs_dir, args.run_id.strip())
+            summary = service.summary(RunQuery(args.run_id.strip()))
             render_runs_show(console, summary)
             return 0
         error_console.print("Usage: runs list | runs show RUN_ID", style="red")
@@ -267,7 +280,20 @@ def _council_command(args, console: Console, error_console: Console) -> int:
 
     try:
         request = build_council_request(args)
-        plan = plan_council_session(request)
+        source_payload = _resolve_source_payload(args)
+        request = replace(
+            request,
+            source_pack_ids=source_payload.source_pack_ids,
+            source_context_summary=source_payload.summary,
+            source_relevance=source_payload.relevance,
+            source_excluded_files=source_payload.excluded_files,
+            source_context_warnings=source_payload.warnings,
+        )
+        service = CouncilService(
+            FileRunStore((request.base_settings or Settings.from_env()).runs_dir),
+            run_council_session_fn=run_council_session,
+        )
+        plan = service.plan_multi(request)
         enforce_cost_budget(
             plan.cost_estimate,
             max_cost_usd=request.max_cost_usd,
@@ -289,10 +315,6 @@ def _council_command(args, console: Console, error_console: Console) -> int:
             if runtime.show_progress
             else NullProgressReporter()
         )
-        session = run_council_session(request, progress=progress, plan=plan)
-        settings = request.base_settings or Settings.from_env()
-
-        pack_paths: list[Path] = []
         create_pack = request.create_pack
         if request.prompt_create_pack and not create_pack:
             # Skip the interactive prompt in non-TTY or --quiet runs so piped
@@ -304,44 +326,35 @@ def _council_command(args, console: Console, error_console: Console) -> int:
                 create_pack = False
             else:
                 create_pack = Confirm.ask("Create implementation pack?", default=False)
-        if create_pack:
-            # Slice 5.9: gate pack on lifecycle approval unless overridden.
-            from council.review_model import is_pack_allowed
-
-            if not is_pack_allowed(
-                session.result.review,
-                override=request.allow_unapproved_pack,
-            ):
-                error_console.print(
-                    "Pack generation blocked: decision is not approved. "
-                    "Re-run with --allow-unapproved-pack, or approve via "
-                    "`uv run python main.py chat` (/approve <run_id>).",
-                    style="red",
-                )
-                return 1
-            ensure_verdict_quality_for_pack(session.result.dossier)
-            run_dir = settings.runs_dir / session.result.dossier.run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-            pack_paths = write_implementation_pack(run_dir, session.result)
-
-        json_path, md_path = save_run(
-            session.result,
-            settings=settings,
-            implementation_pack_paths=pack_paths or None,
+        execution = service.run_multi(
+            MultiCouncilRequest(
+                session_request=request,
+                progress=progress,
+                plan=plan,
+                create_pack=create_pack,
+            )
         )
 
         render_council_result(
             console,
-            session.result,
-            json_path,
-            md_path,
+            execution.result,
+            execution.json_path,
+            execution.md_path,
             quiet=bool(args.quiet),
-            role_play_warning=session.role_play_warning,
-            pack_paths=pack_paths,
-            cost_estimate=session.cost_estimate,
-            routing_warnings=list(plan.routing.routing_warnings),
+            role_play_warning=execution.session.role_play_warning,
+            pack_paths=execution.pack_paths,
+            cost_estimate=execution.session.cost_estimate,
+            routing_warnings=execution.routing_warnings,
         )
         return 0
+    except PackGenerationBlockedError:
+        error_console.print(
+            "Pack generation blocked: decision is not approved. "
+            "Re-run with --allow-unapproved-pack, or approve via "
+            "`uv run python main.py chat` (/approve <run_id>).",
+            style="red",
+        )
+        return 1
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=bool(getattr(args, "quiet", False)))
         return 1
@@ -422,6 +435,47 @@ def _chat_command(args, console: Console, error_console: Console) -> int:
         return 1
 
 
+def _sources_command(args, console: Console, error_console: Console) -> int:
+    try:
+        service = SourceService()
+        sub = getattr(args, "sources_command", None)
+        if sub == "scan":
+            pack = service.scan_and_save(Path(args.path), name=getattr(args, "name", None))
+            render_sources_show(console, pack)
+            return 0
+        if sub == "list":
+            render_sources_list(console, service.list_packs())
+            return 0
+        if sub == "show":
+            render_sources_show(console, service.load(args.source_pack_id))
+            return 0
+        if sub == "query":
+            payload = service.query(args.source_pack_id, args.question)
+            render_sources_query(console, args.source_pack_id, payload)
+            return 0
+        if sub == "remove":
+            removed = service.remove(args.source_pack_id)
+            render_sources_remove(console, args.source_pack_id, removed)
+            return 0 if removed else 1
+        error_console.print("Usage: sources scan PATH | list | show ID | query ID QUESTION | remove ID", style="red")
+        return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+
+
+def _resolve_source_payload(args):
+    service = SourceService()
+    source_pack_ids = list(getattr(args, "source_packs", None) or [])
+    source_paths = [Path(item) for item in (getattr(args, "source_paths", None) or [])]
+    return service.build_context(
+        source_pack_ids=source_pack_ids,
+        source_paths=source_paths,
+        question=(getattr(args, "question", None) or ""),
+        decision_mode=str(getattr(args, "routing_mode", "")),
+    )
+
+
 def _config_command(args, console: Console, error_console: Console) -> int:
     sub = getattr(args, "config_command", None)
     try:
@@ -453,15 +507,14 @@ def _resolve_review_runs_dir(args) -> Path:
 
 
 def _approve_command(args, console: Console, error_console: Console) -> int:
-    from council.review import approve_run
-
     try:
         runs_dir = _resolve_review_runs_dir(args)
-        result = approve_run(
-            runs_dir,
-            args.run_id.strip(),
-            actor=getattr(args, "actor", None),
-            note=getattr(args, "note", "") or "",
+        result = ReviewService(FileRunStore(runs_dir)).approve(
+            ReviewRequest(
+                run_id=args.run_id.strip(),
+                actor=getattr(args, "actor", None),
+                note=getattr(args, "note", "") or "",
+            )
         )
     except RunNotFoundError as exc:
         error_console.print(str(exc), style="red")
@@ -479,15 +532,14 @@ def _approve_command(args, console: Console, error_console: Console) -> int:
 
 
 def _reject_command(args, console: Console, error_console: Console) -> int:
-    from council.review import reject_run
-
     try:
         runs_dir = _resolve_review_runs_dir(args)
-        result = reject_run(
-            runs_dir,
-            args.run_id.strip(),
-            actor=getattr(args, "actor", None),
-            note=args.reason,
+        result = ReviewService(FileRunStore(runs_dir)).reject(
+            RejectRequest(
+                run_id=args.run_id.strip(),
+                actor=getattr(args, "actor", None),
+                reason=args.reason,
+            )
         )
     except RunNotFoundError as exc:
         error_console.print(str(exc), style="red")
@@ -502,15 +554,14 @@ def _reject_command(args, console: Console, error_console: Console) -> int:
 
 
 def _archive_command(args, console: Console, error_console: Console) -> int:
-    from council.review import archive_run
-
     try:
         runs_dir = _resolve_review_runs_dir(args)
-        result = archive_run(
-            runs_dir,
-            args.run_id.strip(),
-            actor=getattr(args, "actor", None),
-            note=getattr(args, "note", "") or "",
+        result = ReviewService(FileRunStore(runs_dir)).archive(
+            ReviewRequest(
+                run_id=args.run_id.strip(),
+                actor=getattr(args, "actor", None),
+                note=getattr(args, "note", "") or "",
+            )
         )
     except RunNotFoundError as exc:
         error_console.print(str(exc), style="red")
@@ -525,12 +576,10 @@ def _archive_command(args, console: Console, error_console: Console) -> int:
 
 
 def _review_command(args, console: Console, error_console: Console) -> int:
-    from council.review import load_run_result as _load_result
-
     try:
         runs_dir = _resolve_review_runs_dir(args)
         run_id = args.run_id.strip()
-        result = _load_result(runs_dir, run_id)
+        result = ReviewService(FileRunStore(runs_dir)).load(run_id)
     except RunNotFoundError as exc:
         error_console.print(str(exc), style="red")
         return 1
@@ -543,38 +592,34 @@ def _review_command(args, console: Console, error_console: Console) -> int:
 
 def _pack_command(args, console: Console, error_console: Console) -> int:
     """Generate the implementation pack for an already-saved run."""
-    from council.review import load_run_result as _load_result
-    from council.review_model import PACK_GATE_BLOCKED_REASON, is_pack_allowed
+    from council.review_model import PACK_GATE_BLOCKED_REASON
 
     try:
         runs_dir = _resolve_review_runs_dir(args)
         run_id = args.run_id.strip()
-        result = _load_result(runs_dir, run_id)
+        service = PackService(FileRunStore(runs_dir))
+        pack = service.generate(
+            PackRequest(
+                run_id=run_id,
+                allow_unapproved=bool(getattr(args, "allow_unapproved", False)),
+            )
+        )
     except RunNotFoundError as exc:
         error_console.print(str(exc), style="red")
         return 1
-    except KNOWN_PROJECT_ERRORS as exc:
-        render_known_error(error_console, exc, quiet=False)
-        return 1
-    override = bool(getattr(args, "allow_unapproved", False))
-    if not is_pack_allowed(result.review, override=override):
+    except PackGenerationBlockedError:
         error_console.print(
             f"{PACK_GATE_BLOCKED_REASON} "
-            f"Run `uv run python main.py approve {run_id}` first, "
+            f"Run `uv run python main.py approve {args.run_id.strip()}` first, "
             "or re-run pack with --allow-unapproved.",
             style="red",
         )
         return 1
-    try:
-        ensure_verdict_quality_for_pack(result.dossier)
-        run_dir = runs_dir / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
-        paths = write_implementation_pack(run_dir, result)
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=False)
         return 1
     console.print("[green]Implementation pack:[/green]")
-    for path in paths:
+    for path in pack.paths:
         console.print(f"  {path}", highlight=False, markup=False)
     return 0
 

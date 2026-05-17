@@ -23,6 +23,57 @@ Decision Dossier + Agent Briefs
 Persistent Run Storage (JSON + Markdown)
 ```
 
+## Application boundaries (Slice 6.1)
+
+Slice 6.1 keeps the Python CLI product intact while inserting explicit
+application boundaries so future chat, web, or desktop surfaces do not need to
+know filesystem and orchestration details.
+
+```text
+CLI / Chat / future UI
+    ↓ input parsing only
+Application services (`council/services/*`)
+    ↓ orchestration + use-case requests
+Domain engine (`engine.py`, `council_session.py`, `intake.py`, `review.py`)
+    ↓ result models
+RunStore (`council/storage/run_store.py`)
+    ↓ current implementation
+Filesystem runs (`runs/<id>/run.json`, `run.md`, pack files)
+
+Renderers (`council/rendering/*`) sit beside the flow:
+service result → renderer → Rich Console / future UI component
+```
+
+Boundary rules:
+
+- `chat.py` coordinates session flow, but should not directly mutate run
+  storage for new features.
+- Services do not import Rich or write to consoles.
+- Renderers build presentation only; they do not call providers, mutate
+  lifecycle state, or save artifacts.
+- Storage does not know about CLI/chat commands.
+- Future UI work should call services and `RunStore`, not scrape `run.md` or
+  shell out to chat internals.
+
+New service modules:
+
+| Module | Responsibility |
+| --- | --- |
+| `council/services/council_service.py` | Standard council runs, chat council bridge, multi-model council persistence |
+| `council/services/review_service.py` | Approve/reject/archive/revision use cases |
+| `council/services/run_service.py` | Load, summarize, list, and thread-query runs |
+| `council/services/pack_service.py` | Lifecycle-gated implementation pack generation |
+| `council/services/intake_service.py` | Console-free intake transitions |
+| `council/services/provider_service.py` | Provider failure recovery planning |
+| `council/sources/service.py` | Local source pack scan/list/show/remove and context building |
+| `council/sources/relevance.py` | Deterministic question-aware scoring and ranking |
+| `council/sources/source_context_builder.py` | Ranked snippet selection, caps, dedupe, explainability |
+
+`council/storage/run_store.py` defines the `RunStore` protocol and
+`FileRunStore`. JSON/Markdown files remain the storage format; the seam exists
+so later web/desktop work can use the same core without baking in filesystem
+layout assumptions.
+
 ## Provider contract (Slice 1.2+)
 
 All LLM backends implement `LLMProvider`:
@@ -90,7 +141,7 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 ### Chat mode (Slice 5.6)
 
-`council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
+`council/chat.py` provides a readline-style loop (`chat>` prompt) over the same services as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state lives in `council/chat_state.py`; rendering helpers live under `council/rendering/`.
 
 ### Guided decision conversation (Slice 6.0)
 
@@ -134,7 +185,7 @@ Slice 5.9 wired the lifecycle into the chat slash verbs. Slice 5.10 lifts every 
 | `review <run_id>` | `/review` | `--runs-dir PATH` |
 | `pack <run_id>` | `/pack` | `--allow-unapproved`, `--runs-dir PATH` |
 
-All five reuse `council/review.py` directly — no new business logic, just thin dispatchers in `main.py` plus a `render_review(console, run_id, result)` helper in `council/cli.py` that mirrors the chat panel byte-for-byte.
+All five route through `ReviewService` / `PackService` so CLI and chat share lifecycle behavior while keeping rendering separate.
 
 Actor resolution is the same as Slice 5.9: `--actor` flag → `DCOUNCIL_REVIEW_ACTOR` env → `USER` / `USERNAME` → `local`. Approving a run whose `is_revision_of` is set still triggers automatic parent supersession; archived runs still refuse further transitions; `pack` honors the same gate as the chat surface (and the same `--allow-unapproved` override). `reject` requires `--reason` at the argparse level so omitting it fails fast with `exit 2`.
 
@@ -165,7 +216,7 @@ Chat is now a continuous decision workspace. Three layers:
 
 2. **Run model — `council/models.py`.** `RUN_SCHEMA_VERSION` bumped to **1.8**. `CouncilRunResult` gains optional `decision_thread: DecisionThreadMeta | None`. `DecisionThreadMeta` carries `parent_run_id`, `thread_id`, and the structured `context_summary`. Persists into `run.json` and renders into council markdown as a `Previous Context Used` section.
 
-3. **Session memory — `council/chat.py`.** `ChatSessionState` grows runtime-only fields: `last_question`, `last_direct_answer`, `last_decision_type`, `last_pack_paths`, `last_profile`, `last_routing_mode`, `current_context_run_id`, `current_context`, `current_thread_id`. After every successful council run we refresh these fields and anchor the thread id (using the parent thread if continuing, the run's own id if starting fresh).
+3. **Session memory — `council/chat_state.py`.** `ChatSessionState` carries runtime-only fields: `last_question`, `last_direct_answer`, `last_decision_type`, `last_pack_paths`, `last_profile`, `last_routing_mode`, `current_context_run_id`, `current_context`, `current_thread_id`. After every successful council run chat refreshes these fields and anchors the thread id (using the parent thread if continuing, the run's own id if starting fresh).
 
 `/run` is unchanged; `/council` and the natural-language path now both honor `current_context`. When a natural line matches a follow-up phrase AND a `last_run_id` exists, chat asks **"Use previous decision context from <run_id>? [Y/n]"** (default yes). Accepting loads the run from `runs_dir`, summarises it, and threads it into the next request. Topic-change questions never auto-attach (the phrase matcher is conservative on purpose).
 
@@ -363,9 +414,48 @@ Configuration errors:
 - Safe errors via `openai_errors.py` (provider-name-aware, no raw payloads or key fragments)
 - Streaming disabled (`supports_streaming = false`)
 
+## Source packs (Slice 6.2)
+
+Local source context is modeled as `SourcePack` and scanned from filesystem paths
+only (CLI-first). Scan output is persisted in `.dcouncil/sources/<id>.json` and
+contains redacted summaries/snippets, not raw whole-file dumps.
+
+Safety defaults:
+
+- extension allow-list only (`.md`, `.txt`, `.json`, `.csv`, `.yaml`, `.yml`, `.toml`, `.py`, `.js`, `.ts`, `.tsx`)
+- symlinks skipped by default
+- binary files skipped
+- per-file and total-size caps
+- common folders ignored (`.git`, `node_modules`, `.venv`, `__pycache__`, `dist`, `build`, `runs`, `.dcouncil`)
+- obvious secret-like lines redacted before persistence and prompt injection
+
+CLI and chat attach source context through service-layer requests:
+`source_pack_ids` + `source_context_summary`. Council prompt injection is
+concise and capped; no embeddings/vector search/PDF/OCR/web scraping are used.
+
+## Deterministic source relevance (Slice 6.3)
+
+Before prompt injection, source files are ranked deterministically using:
+
+- keyword overlap with question/intake/constraints
+- filename/path weighting
+- heading/title weighting
+- extension weighting
+- simple term-frequency scoring
+- exact phrase boosts
+- recency hook placeholder (fixed `0` for now)
+
+Selection is hard-capped by files/snippets/chars with duplicate snippet
+suppression and explainability metadata (`score`, `matched_terms`,
+`why_selected`). `run.md` now includes a `## Source Relevance` section with
+selected and excluded files.
+
+Embeddings/vector DB are intentionally deferred to keep this slice cheap,
+inspectable, and local-first.
+
 ## Run artifacts
 
-- `schema_version` **1.10** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review`; 1.10 added `intake` for Slice 6.0)
+- `schema_version` **1.11** on `CouncilRunResult` (1.8 added `decision_thread`; 1.9 added `review`; 1.10 added `intake`; 1.11 adds `source_pack_ids` and `source_context_summary`)
 - `debate_transcript` when `--debate-rounds` > 0
 - optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON

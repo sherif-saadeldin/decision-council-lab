@@ -60,6 +60,7 @@ from council.secrets import (
     set_keyring_secret,
     validate_secret_name,
 )
+from council.sources.models import SourcePack
 from council.version import APP_VERSION
 
 KNOWN_PROJECT_ERRORS: tuple[type[Exception], ...] = (
@@ -105,6 +106,7 @@ CLI_COMMANDS = frozenset(
         "archive",
         "review",
         "pack",
+        "sources",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -135,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the council on a decision question.",
     )
     _add_run_arguments(run_parser)
+    _add_source_arguments(run_parser)
 
     subparsers.add_parser("presets", help="List model routing presets.")
     doctor_parser = subparsers.add_parser("doctor", help="Check provider configuration.")
@@ -181,11 +184,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the same question across multiple presets/profiles and compare.",
     )
     _add_compare_arguments(compare_parser)
+    _add_source_arguments(compare_parser)
     benchmark_parser = subparsers.add_parser(
         "benchmark",
         help="Alias for compare.",
     )
     _add_compare_arguments(benchmark_parser)
+    _add_source_arguments(benchmark_parser)
 
     smoke_parser = subparsers.add_parser(
         "smoke",
@@ -216,6 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Multi-model council: each role may use a different preset/model.",
     )
     _add_council_arguments(council_parser)
+    _add_source_arguments(council_parser)
 
     runs_parser = subparsers.add_parser("runs", help="List and inspect saved council runs.")
     runs_sub = runs_parser.add_subparsers(dest="runs_command", required=True)
@@ -305,6 +311,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Bypass the lifecycle gate and generate a pack on a draft run.",
     )
     _add_runs_dir_argument(pack_parser)
+
+    sources_parser = subparsers.add_parser(
+        "sources",
+        help="Manage local source packs used for decision context.",
+    )
+    sources_sub = sources_parser.add_subparsers(dest="sources_command", required=True)
+    sources_scan = sources_sub.add_parser("scan", help="Scan a folder/file into a local source pack.")
+    sources_scan.add_argument("path", help="Folder or file path to scan.")
+    sources_scan.add_argument("--name", default=None, help="Optional source pack display name.")
+    sources_sub.add_parser("list", help="List saved source packs.")
+    sources_show = sources_sub.add_parser("show", help="Show source pack details.")
+    sources_show.add_argument("source_pack_id", help="Source pack ID.")
+    sources_query = sources_sub.add_parser("query", help="Query ranked relevance for a source pack.")
+    sources_query.add_argument("source_pack_id", help="Source pack ID.")
+    sources_query.add_argument("question", help="Question used for deterministic ranking.")
+    sources_remove = sources_sub.add_parser("remove", help="Delete a saved source pack.")
+    sources_remove.add_argument("source_pack_id", help="Source pack ID.")
 
     return parser
 
@@ -631,6 +654,8 @@ def build_council_request(args: argparse.Namespace) -> CouncilSessionRequest:
         runtime=runtime,
         base_settings=base,
         allow_unapproved_pack=bool(getattr(args, "allow_unapproved_pack", False)),
+        source_pack_ids=list(getattr(args, "source_packs", None) or []),
+        source_context_summary="",
     )
 
 
@@ -735,6 +760,25 @@ def _add_system_profile_argument(parser: argparse.ArgumentParser) -> None:
         default="default",
         metavar="NAME",
         help="System prompt profile for role identity (default: default).",
+    )
+
+
+def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source-pack",
+        action="append",
+        dest="source_packs",
+        default=None,
+        metavar="SOURCE_PACK_ID",
+        help="Attach a saved local source pack by ID (repeatable).",
+    )
+    parser.add_argument(
+        "--source-path",
+        action="append",
+        dest="source_paths",
+        default=None,
+        metavar="PATH",
+        help="Scan a local folder/file and attach as temporary source context (repeatable).",
     )
 
 
@@ -1215,6 +1259,77 @@ def render_runs_show(console: Console, summary) -> None:
 
     if not summary.md_path.is_file():
         console.print("\n[yellow]Markdown file missing on disk.[/yellow]")
+
+
+def render_sources_list(console: Console, packs: list[SourcePack]) -> None:
+    if not packs:
+        console.print("No source packs found. Run: uv run python main.py sources scan PATH")
+        return
+    table = Table(title="Source packs")
+    table.add_column("ID", style="bold")
+    table.add_column("Name")
+    table.add_column("Files")
+    table.add_column("Bytes")
+    table.add_column("Root / files")
+    for pack in packs:
+        table.add_row(
+            pack.source_pack_id,
+            pack.name,
+            str(pack.file_count),
+            str(pack.total_bytes),
+            pack.display_root,
+        )
+    console.print(table)
+
+
+def render_sources_show(console: Console, pack: SourcePack) -> None:
+    lines = [
+        f"ID: [cyan]{pack.source_pack_id}[/cyan]",
+        f"Name: {pack.name}",
+        f"Created: {pack.created_at.isoformat()}",
+        f"Files: {pack.file_count}",
+        f"Bytes: {pack.total_bytes}",
+        f"Extensions: {', '.join(pack.included_extensions) if pack.included_extensions else '—'}",
+    ]
+    if pack.root_path:
+        lines.append(f"Root: {pack.root_path}")
+    if pack.warnings:
+        lines.append("Warnings:")
+        lines.extend(f"  - {item}" for item in pack.warnings)
+    lines.append("")
+    lines.append("Top files:")
+    for summary in pack.summaries[:10]:
+        lines.append(f"  - {summary.path} ({summary.size_bytes} bytes)")
+    console.print(Panel("\n".join(lines), title="Source pack", border_style="cyan"))
+
+
+def render_sources_remove(console: Console, source_pack_id: str, removed: bool) -> None:
+    if removed:
+        console.print(f"[green]Removed source pack[/green] {source_pack_id}")
+    else:
+        console.print(f"[yellow]Source pack not found:[/yellow] {source_pack_id}")
+
+
+def render_sources_query(console: Console, source_pack_id: str, payload) -> None:
+    lines = [f"Source pack: [cyan]{source_pack_id}[/cyan]"]
+    if payload.matched_keywords:
+        lines.append(f"Matched keywords: {', '.join(payload.matched_keywords[:12])}")
+    lines.append("")
+    lines.append("Top ranked files:")
+    for item in payload.relevance[:10]:
+        lines.append(f"- {item.path}")
+        lines.append(f"  - score: {item.score:.2f}")
+        if item.matched_terms:
+            lines.append(f"  - matched: {', '.join(item.matched_terms[:8])}")
+        if item.why_selected:
+            lines.append(f"  - why: {', '.join(item.why_selected[:6])}")
+        for snippet in item.snippets[:2]:
+            lines.append(f"  - snippet: {snippet}")
+    if payload.excluded_files:
+        lines.append("")
+        lines.append("Excluded:")
+        lines.extend(f"- {entry}" for entry in payload.excluded_files[:10])
+    console.print(Panel("\n".join(lines), title="Source relevance query", border_style="cyan"))
 
 
 def render_smoke_report(console: Console, report: SmokeReport) -> None:

@@ -38,7 +38,10 @@ Slice 5.8 — Decision threads and contextual follow-ups (done)
 Slice 5.9 — Decision review loop and approval lifecycle (done)
 Slice 5.10 — CLI surface for the review lifecycle: `approve`, `reject`, `archive`, `review`, `pack` subcommands with `--actor`, parity with chat slash verbs (done)
 Slice 6.0 — Guided decision conversation flow (intake, modes, human-first results) (done)
-Slice 6.1 — Anthropic/Gemini native SDK providers
+Slice 6.1 — Application boundary hardening: service layer, RunStore abstraction, rendering split, chat state extraction (done)
+Slice 6.2 — Source packs and folder-based context (done)
+Slice 6.3 — Deterministic source relevance engine (done)
+Slice 6.4 — Anthropic/Gemini native SDK providers
 Slice 7 — Memory/revisit system
 Slice 8 — CLI enhancements
 Slice 9 — UI integration later
