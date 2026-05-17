@@ -13,11 +13,20 @@ from council.chat import (
     ChatSession,
     ChatSessionState,
     build_chat_context,
+    looks_like_shell_command,
     parse_chat_line,
     render_chat_help,
     render_chat_welcome,
     run_chat_session,
 )
+from council.config_profiles import (
+    ConfigProfile,
+    init_config_file,
+    load_config_file,
+    set_active_profile,
+)
+from council.provider_availability import HostedProviderUnavailableError
+from council.providers.errors import MissingProviderCredentialError
 from council.config import Settings
 from council.council_session import CouncilSessionResult
 from council.doctor import CheckStatus, DoctorCheck
@@ -276,3 +285,232 @@ def test_main_chat_parser_exists() -> None:
     args = parse_args(["chat"])
     assert args.command == "chat"
     assert args.system_profile == "default"
+
+
+# --- /profile, /status, shell guard, error recovery -------------------------
+
+
+def _make_session(
+    ctx,
+    *,
+    state: ChatSessionState | None = None,
+    council_runner=None,
+    confirm_fn=None,
+) -> tuple[ChatSession, StringIO, StringIO]:
+    out = StringIO()
+    err = StringIO()
+    session = ChatSession(
+        console=Console(file=out, force_terminal=True, width=120),
+        error_console=Console(file=err, force_terminal=True, width=120),
+        ctx=ctx,
+        state=state or ChatSessionState(),
+        council_runner=council_runner,
+        confirm_fn=confirm_fn or (lambda _m, _d: False),
+    )
+    return session, out, err
+
+
+def test_looks_like_shell_command_detects_common_paste_forms() -> None:
+    assert looks_like_shell_command("uv run python main.py chat")
+    assert looks_like_shell_command("git status")
+    assert looks_like_shell_command("python -V")
+    assert looks_like_shell_command("./script.sh")
+    assert not looks_like_shell_command("Should we ship the MVP?")
+    assert not looks_like_shell_command("how do I run uv?")  # not a paste
+
+
+def test_natural_shell_paste_is_rejected_not_run(chat_ctx) -> None:
+    ctx = chat_ctx
+    confirm_calls: list[str] = []
+
+    def confirm(message: str, default: bool) -> bool:
+        confirm_calls.append(message)
+        return True
+
+    runner = MagicMock()
+    session, _, err = _make_session(ctx, council_runner=runner, confirm_fn=confirm)
+    session.handle_line("uv run python main.py chat")
+    assert runner.call_count == 0
+    assert confirm_calls == []  # confirm not even reached
+    # Rich injects ANSI escapes around tokens like "/help", so check on a
+    # phrase Rich will leave untouched.
+    assert "This is chat mode, not a shell" in err.getvalue()
+
+
+def test_status_command_shows_profile_and_routing(chat_ctx) -> None:
+    ctx = chat_ctx
+    state = ChatSessionState(last_run_id="run-xyz-001")
+    session, out, _ = _make_session(ctx, state=state)
+    assert session.handle_line("/status") == "continue"
+    text = out.getvalue()
+    assert "Chat Status" in text
+    assert "economy" in text
+    assert "default" in text
+    assert "run-xyz-001" in text
+
+
+def test_profile_without_args_shows_active(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    init_config_file(config_path)
+    monkeypatch.setattr(
+        "council.chat.load_config_file",
+        lambda path=None: load_config_file(config_path),
+    )
+    ctx = build_chat_context(mock_settings, config_profile_name="mock")
+    session, out, _ = _make_session(ctx)
+    session.handle_line("/profile")
+    assert "mock" in out.getvalue()
+
+
+def test_profile_list_shows_all_profiles(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    init_config_file(config_path)
+    monkeypatch.setattr(
+        "council.chat.load_config_file",
+        lambda path=None: load_config_file(config_path),
+    )
+    ctx = build_chat_context(mock_settings, config_profile_name="mock")
+    session, out, _ = _make_session(ctx)
+    session.handle_line("/profile list")
+    text = out.getvalue()
+    assert "mock" in text
+    assert "ollama-local" in text
+    assert "openai-mini" in text
+
+
+def test_profile_mock_alias_switches_active(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    init_config_file(config_path)
+    # Start with a different active profile, then chat /profile mock to switch.
+    set_active_profile("ollama-local", config_path)
+    monkeypatch.setattr(
+        "council.chat.load_config_file",
+        lambda path=None: load_config_file(config_path),
+    )
+    ctx = build_chat_context(mock_settings, config_profile_name="ollama-local")
+    session, out, _ = _make_session(ctx)
+    session.handle_line("/profile mock")
+    text = out.getvalue()
+    assert "Switched active profile to" in text
+    assert "mock" in text
+    assert session.state.config_profile_name == "mock"
+    on_disk = load_config_file(config_path)
+    assert on_disk is not None
+    assert on_disk.active_profile == "mock"
+
+
+def test_profile_use_unknown_does_not_exit(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.toml"
+    init_config_file(config_path)
+    monkeypatch.setattr(
+        "council.chat.load_config_file",
+        lambda path=None: load_config_file(config_path),
+    )
+    ctx = build_chat_context(mock_settings, config_profile_name="mock")
+    session, _, err = _make_session(ctx)
+    assert session.handle_line("/profile use not-a-profile") == "continue"
+    assert "not-a-profile" in err.getvalue()
+
+
+def test_chat_recovers_from_hosted_provider_failure(chat_ctx, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = chat_ctx
+    # Force the chat context to look hosted so the hint fires.
+    hosted_profile = ConfigProfile(name="hosted-fake", preset="openrouter-sonnet")
+    from dataclasses import replace as dc_replace
+
+    new_ctx = dc_replace(ctx, config_profile=hosted_profile)
+
+    def boom(*_a, **_k):
+        raise HostedProviderUnavailableError("openrouter live ping failed: 401")
+
+    session, _, err = _make_session(new_ctx, council_runner=boom)
+    # Natural input → council runner raises HostedProviderUnavailableError.
+    # Session must stay alive and surface the actionable hint.
+    confirm_calls: list[str] = []
+
+    def confirm(message: str, _default: bool) -> bool:
+        confirm_calls.append(message)
+        return True
+
+    session.confirm_fn = confirm
+    assert session.handle_line("Should we ship?") == "continue"
+    err_text = err.getvalue()
+    assert "openrouter" in err_text
+    # Rich auto-highlights tokens like `/profile mock`, so match a phrase Rich
+    # will leave untouched (the leading phrase).
+    assert "Provider failed" in err_text
+    assert "/profile mock" in err_text or "profile" in err_text
+
+
+def test_chat_known_error_via_slash_keeps_session_alive(chat_ctx) -> None:
+    ctx = chat_ctx
+    hosted_profile = ConfigProfile(name="hosted-fake", mode="openai_compatible", preset="openrouter-sonnet")
+    from dataclasses import replace as dc_replace
+
+    new_ctx = dc_replace(ctx, config_profile=hosted_profile)
+
+    def boom(*_a, **_k):
+        raise MissingProviderCredentialError("openrouter", "LLM_API_KEY")
+
+    session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=lambda _m, _d: True)
+    assert session.handle_line("/council Should we ship?") == "continue"
+    err_text = err.getvalue()
+    assert "LLM_API_KEY" in err_text
+    # The hosted-failure hint phrase Rich won't decorate.
+    assert "Provider failed" in err_text
+
+
+def test_bare_slash_does_not_crash() -> None:
+    """`/`, `/ `, `/   ` must parse as empty, not raise IndexError."""
+    for line in ("/", "/ ", "/   "):
+        parsed = parse_chat_line(line)
+        assert parsed.kind == ChatLineKind.EMPTY, line
+
+
+def test_handle_line_accepts_bare_slash(chat_ctx) -> None:
+    ctx = chat_ctx
+    session, _, _ = _make_session(ctx)
+    assert session.handle_line("/") == "continue"
+    assert session.handle_line("/ ") == "continue"
+
+
+def test_chat_corrupt_config_surfaces_friendly_message(
+    mock_settings: Settings,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed config.toml must not crash chat with a raw TOML error."""
+    from io import StringIO as _S
+
+    from council.cli import render_known_error
+    from council.config_profiles import CorruptConfigFileError
+
+    bad = tmp_path / "config.toml"
+    bad.write_text("this is = not = toml\n[broken\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "council.chat.load_config_file",
+        lambda path=None: load_config_file(bad),
+    )
+    # build_chat_context must propagate a ConfigProfileError (caught upstream).
+    with pytest.raises(CorruptConfigFileError) as excinfo:
+        build_chat_context(mock_settings)
+    err = _S()
+    render_known_error(Console(file=err, force_terminal=True, width=120), excinfo.value, quiet=False)
+    text = err.getvalue()
+    assert "config init" in text  # recovery hint reaches the user

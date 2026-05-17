@@ -27,11 +27,18 @@ from council.config import Settings
 from council.config_profiles import (
     ConfigProfile,
     CouncilConfigFile,
+    UnknownConfigProfileError,
     load_config_file,
     resolve_debate_rounds_with_profile,
     resolve_profile_name,
     resolve_runtime_with_profile,
     resolve_settings_with_profile,
+    set_active_profile,
+)
+from council.provider_availability import (
+    HostedProviderUnavailableError,
+    credential_source_for_preset,
+    preset_is_hosted,
 )
 from council.council_session import (
     CouncilSessionRequest,
@@ -53,6 +60,52 @@ CHAT_PROMPT = "chat> "
 DEFAULT_ROUTING_MODE = "economy"
 DEFAULT_SYSTEM_PROFILE = "default"
 
+# Shell-like input guard: tokens that almost certainly indicate a user pasted
+# a shell command into chat instead of a question. We refuse these to avoid
+# (a) burning a council run on a paste, and (b) confusing users who expect
+# the chat to "run" the command.
+SHELL_LIKE_PREFIXES: tuple[str, ...] = (
+    "uv ",
+    "uvx ",
+    "python ",
+    "python3 ",
+    "py ",
+    "pip ",
+    "pipx ",
+    "npm ",
+    "npx ",
+    "yarn ",
+    "pnpm ",
+    "git ",
+    "gh ",
+    "ls ",
+    "cd ",
+    "rm ",
+    "mv ",
+    "cp ",
+    "cat ",
+    "echo ",
+    "curl ",
+    "wget ",
+    "docker ",
+    "kubectl ",
+    "make ",
+    "bash ",
+    "sh ",
+    "powershell ",
+    "pwsh ",
+    "./",
+)
+SHELL_REJECTION_MESSAGE = (
+    "This is chat mode, not a shell. Use slash commands "
+    "(/help) or exit to run shell commands."
+)
+
+HOSTED_FAILURE_HINT = (
+    "Provider failed. Use `/profile mock` to switch to the offline mock, or "
+    "run `/doctor` to see what's missing."
+)
+
 CHAT_HELP_LINES: tuple[str, ...] = (
     "/council <question>  — multi-model council (economy routing)",
     "/run <question>      — single-provider council run",
@@ -64,11 +117,25 @@ CHAT_HELP_LINES: tuple[str, ...] = (
     "/show <run_id|last>  — inspect a saved run",
     "/pack <run_id|last>  — generate implementation pack (requires approval)",
     "/prompts             — system prompt inventory",
+    "/profile [name|list] — show, list, or switch active config profile",
+    "/status              — show active profile, routing, provider, last run",
     "/help                — show this help",
     "/exit                — leave chat",
     "",
     "Type a question without / to run council (confirms first).",
 )
+
+
+def looks_like_shell_command(text: str) -> bool:
+    """Heuristic: refuse pasted shell commands so they don't become questions."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+    lowered = stripped.lower()
+    for prefix in SHELL_LIKE_PREFIXES:
+        if lowered.startswith(prefix):
+            return True
+    return False
 
 
 class ChatLineKind(str, Enum):
@@ -105,7 +172,11 @@ def parse_chat_line(line: str) -> ParsedChatLine:
     if not text:
         return ParsedChatLine(kind=ChatLineKind.EMPTY)
     if text.startswith("/"):
+        # `/`, `/ `, or `/   foo` collapse to an empty command name — treat
+        # those as empty rather than crashing on parts[0].
         parts = text[1:].split(maxsplit=1)
+        if not parts or not parts[0]:
+            return ParsedChatLine(kind=ChatLineKind.EMPTY)
         command = parts[0].lower()
         args = parts[1].strip() if len(parts) > 1 else ""
         return ParsedChatLine(kind=ChatLineKind.SLASH, command=command, args=args)
@@ -240,10 +311,16 @@ class ChatSession:
         return self._handle_slash(parsed.command, parsed.args)
 
     def _handle_natural(self, question: str) -> Literal["continue", "exit"]:
+        if looks_like_shell_command(question):
+            self.error_console.print(SHELL_REJECTION_MESSAGE, style="yellow")
+            return "continue"
         if not self.confirm_fn("Run council on this?", True):
             self.console.print("[dim]Cancelled.[/dim]")
             return "continue"
-        self._run_council(question)
+        try:
+            self._run_council(question)
+        except KNOWN_PROJECT_ERRORS as exc:
+            self._render_provider_error(exc)
         return "continue"
 
     def _handle_slash(self, command: str, args: str) -> Literal["continue", "exit"]:
@@ -261,6 +338,8 @@ class ChatSession:
             "show": self._cmd_show,
             "pack": self._cmd_pack,
             "prompts": lambda _a: self._cmd_prompts(),
+            "profile": self._cmd_profile,
+            "status": lambda _a: self._cmd_status(),
         }
         handler = handlers.get(command)
         if handler is None:
@@ -269,8 +348,33 @@ class ChatSession:
         try:
             return handler(args)
         except KNOWN_PROJECT_ERRORS as exc:
-            render_known_error(self.error_console, exc, quiet=False)
+            self._render_provider_error(exc)
             return "continue"
+
+    def _render_provider_error(self, exc: Exception) -> None:
+        render_known_error(self.error_console, exc, quiet=False)
+        if isinstance(exc, HostedProviderUnavailableError) or self._is_hosted_failure(exc):
+            self.error_console.print(HOSTED_FAILURE_HINT, style="yellow")
+
+    def _is_hosted_failure(self, exc: Exception) -> bool:
+        """Best-effort: does this error stem from a hosted provider config?"""
+        try:
+            from council.providers.errors import (
+                MissingProviderCredentialError,
+                ProviderResponseError,
+            )
+        except ImportError:
+            return False
+        if not isinstance(exc, (MissingProviderCredentialError, ProviderResponseError)):
+            return False
+        profile = self.ctx.config_profile
+        if profile is None:
+            return False
+        # Heuristic: profile uses a hosted preset, or hosted mode (openai/openai_compatible)
+        if profile.preset and preset_is_hosted(profile.preset):
+            return True
+        mode = (profile.mode or "").lower()
+        return mode in {"openai", "openai_compatible"}
 
     def _cmd_exit(self) -> Literal["exit"]:
         self.console.print("Goodbye.")
@@ -333,6 +437,115 @@ class ChatSession:
 
     def _cmd_prompts(self) -> Literal["continue", "exit"]:
         render_prompts_inventory(self.console, system_profile=self.state.system_profile)
+        return "continue"
+
+    def _cmd_profile(self, args: str) -> Literal["continue", "exit"]:
+        token = args.strip()
+        if not token:
+            return self._show_active_profile()
+        parts = token.split(maxsplit=1)
+        verb = parts[0].lower()
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if verb == "list":
+            return self._list_profiles()
+        if verb == "show":
+            return self._show_active_profile()
+        if verb == "use":
+            if not rest:
+                self.error_console.print("Usage: /profile use NAME", style="red")
+                return "continue"
+            return self._switch_profile(rest)
+        # `/profile <name>` is sugar for `/profile use <name>`.
+        return self._switch_profile(token)
+
+    def _show_active_profile(self) -> Literal["continue", "exit"]:
+        config = self.ctx.config
+        if config is None:
+            self.console.print(
+                "No config file loaded. Run [bold]/setup[/bold] or "
+                "[bold]config init[/bold] outside chat."
+            )
+            return "continue"
+        self.console.print(
+            f"Active config profile: [cyan]{config.active_profile}[/cyan] "
+            f"({config.path})"
+        )
+        return "continue"
+
+    def _list_profiles(self) -> Literal["continue", "exit"]:
+        config = self.ctx.config
+        if config is None:
+            self.console.print("No config file loaded.")
+            return "continue"
+        for name in config.profile_names():
+            marker = "*" if name == config.active_profile else " "
+            self.console.print(f" {marker} {name}")
+        return "continue"
+
+    def _switch_profile(self, name: str) -> Literal["continue", "exit"]:
+        config = self.ctx.config
+        if config is None:
+            self.error_console.print(
+                "No config file present. Run config init first.", style="red"
+            )
+            return "continue"
+        try:
+            set_active_profile(name, config.path)
+        except UnknownConfigProfileError as exc:
+            self.error_console.print(str(exc), style="red")
+            return "continue"
+        # Rebuild context against the new active profile so subsequent
+        # commands use the right settings/runtime.
+        new_ctx = build_chat_context(
+            self.ctx.settings,
+            system_profile=self.state.system_profile,
+            routing_mode=self.state.routing_mode,
+            config_profile_name=name,
+        )
+        self.ctx = new_ctx
+        self.state.config_profile_name = name
+        self.console.print(
+            f"[green]Switched active profile to[/green] [cyan]{name}[/cyan]."
+        )
+        return "continue"
+
+    def _cmd_status(self) -> Literal["continue", "exit"]:
+        config = self.ctx.config
+        profile = self.ctx.config_profile
+        config_label = config.active_profile if config else "(env defaults)"
+        provider = self.ctx.settings.llm_provider_name
+        mode = self.ctx.settings.llm_mode
+        preset = profile.preset if profile else None
+        model = (
+            self.ctx.settings.llm_model
+            or self.ctx.settings.openai_model
+            or self.ctx.settings.mock_model
+        )
+        cred_source: str
+        if preset:
+            cred_source = credential_source_for_preset(preset, self.ctx.settings)
+        elif mode == "mock":
+            cred_source = "not_required"
+        elif mode == "openai":
+            from council.secrets import credential_source
+
+            cred_source = credential_source("OPENAI_API_KEY")
+        else:
+            from council.secrets import credential_source
+
+            cred_source = credential_source("LLM_API_KEY")
+        last_run = self.state.last_run_id or "—"
+        lines = [
+            f"Config profile : [cyan]{config_label}[/cyan]",
+            f"System profile : [cyan]{self.state.system_profile}[/cyan]",
+            f"Routing mode   : [cyan]{self.state.routing_mode}[/cyan]",
+            f"Provider/mode  : [cyan]{provider}[/cyan] ({mode})",
+            f"Preset         : [cyan]{preset or '—'}[/cyan]",
+            f"Model          : [cyan]{model or '—'}[/cyan]",
+            f"Credential src : [cyan]{cred_source}[/cyan]",
+            f"Last run id    : [cyan]{last_run}[/cyan]",
+        ]
+        self.console.print(Panel("\n".join(lines), title="Chat Status", border_style="blue"))
         return "continue"
 
     def _cmd_pack(self, args: str) -> Literal["continue", "exit"]:

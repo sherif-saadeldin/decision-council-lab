@@ -319,16 +319,20 @@ def _setup_command(args, console: Console, error_console: Console) -> int:
 
     from council.config_profiles import config_path as setup_config_path
 
-    result = run_setup(
-        interactive=not bool(args.non_interactive),
-        profile_name=getattr(args, "profile", None),
-        config_path_override=setup_config_path(),
-        console=console,
-        store_secret_fn=set_keyring_secret,
-        secret_prompt_fn=getpass,
-        doctor_fn=run_doctor,
-        smoke_fn=run_smoke,
-    )
+    try:
+        result = run_setup(
+            interactive=not bool(args.non_interactive),
+            profile_name=getattr(args, "profile", None),
+            config_path_override=setup_config_path(),
+            console=console,
+            store_secret_fn=set_keyring_secret,
+            secret_prompt_fn=getpass,
+            doctor_fn=run_doctor,
+            smoke_fn=run_smoke,
+        )
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
     if result.message:
         if result.exit_code == 0:
             console.print(result.message)

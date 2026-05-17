@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -13,6 +15,11 @@ from council.providers.api_mode import normalize_api_mode
 from council.runtime import DEFAULT_TIMEOUT_SECONDS, RuntimeOptions
 
 DEFAULT_CONFIG_PATH = Path(".dcouncil/config.toml")
+CONFIG_BACKUP_SUFFIX = ".bak"
+CONFIG_RECOVERY_INSTRUCTION = (
+    "Fix the file manually (a .bak copy is created on each successful write) "
+    "or recreate it with: uv run python main.py config init."
+)
 
 SECRET_FIELD_NAMES = frozenset(
     {
@@ -64,6 +71,17 @@ class UnknownConfigProfileError(ConfigProfileError):
         super().__init__(f"Unknown config profile {profile_name!r}. Available: {available_text}.")
 
 
+class CorruptConfigFileError(ConfigProfileError):
+    """Raised when .dcouncil/config.toml is not valid TOML or has duplicate keys."""
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(
+            f"Config file {path} is invalid: {reason}\n{CONFIG_RECOVERY_INSTRUCTION}"
+        )
+
+
 @dataclass(frozen=True)
 class ConfigProfile:
     name: str
@@ -102,7 +120,7 @@ def init_config_file(path: Path | None = None, *, force: bool = False) -> Path:
     if target.exists() and not force:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(SAMPLE_CONFIG_TOML, encoding="utf-8")
+    _atomic_write_text(target, SAMPLE_CONFIG_TOML)
     _validate_no_secrets_in_file(target)
     return target
 
@@ -111,7 +129,12 @@ def load_config_file(path: Path | None = None) -> CouncilConfigFile | None:
     target = config_path(path)
     if not target.exists():
         return None
-    raw = tomllib.loads(target.read_text(encoding="utf-8"))
+    text = target.read_text(encoding="utf-8")
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise CorruptConfigFileError(target, str(exc)) from exc
+    _check_for_duplicate_top_level_keys(text, target)
     _reject_secret_fields(raw, source=str(target))
     active = str(raw.get("active_profile", "")).strip() or "mock"
     profiles_block = raw.get("profiles")
@@ -129,6 +152,20 @@ def load_config_file(path: Path | None = None) -> CouncilConfigFile | None:
     if active not in profiles:
         raise UnknownConfigProfileError(active, tuple(sorted(profiles.keys())))
     return CouncilConfigFile(path=target, active_profile=active, profiles=profiles)
+
+
+def validate_config_file(path: Path | None = None) -> tuple[bool, str | None]:
+    """Return (ok, message). Loads the file and returns a friendly diagnostic if broken."""
+    target = config_path(path)
+    if not target.exists():
+        return True, None
+    try:
+        load_config_file(target)
+        return True, None
+    except CorruptConfigFileError as exc:
+        return False, str(exc)
+    except ConfigProfileError as exc:
+        return False, str(exc)
 
 
 def render_config_file_toml(active_profile: str, profiles: dict[str, ConfigProfile]) -> str:
@@ -155,9 +192,68 @@ def save_config_file(
     target = config_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     content = render_config_file_toml(active_profile, profiles)
-    target.write_text(content, encoding="utf-8")
+    _backup_existing(target)
+    _atomic_write_text(target, content)
     _validate_no_secrets_in_file(target)
     return target
+
+
+def _backup_existing(target: Path) -> Path | None:
+    """Copy the current file to <target>.bak before rewrite. No-op when missing."""
+    if not target.exists():
+        return None
+    backup = target.with_suffix(target.suffix + CONFIG_BACKUP_SUFFIX)
+    try:
+        backup.write_bytes(target.read_bytes())
+    except OSError:
+        return None
+    return backup
+
+
+def _atomic_write_text(target: Path, content: str) -> None:
+    """Write to a sibling tmp file then atomically replace the target."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=target.name + ".",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _check_for_duplicate_top_level_keys(text: str, source: Path) -> None:
+    """tomllib already rejects most duplicates, but guard against legacy edits
+    that produce two `active_profile = ...` lines in the file root."""
+    in_root = True
+    seen: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("["):
+            in_root = False
+            continue
+        if not in_root:
+            continue
+        match = re.match(r"^([A-Za-z0-9_\-]+)\s*=", stripped)
+        if not match:
+            continue
+        key = match.group(1)
+        if key in seen:
+            raise CorruptConfigFileError(
+                source,
+                f"duplicate top-level key {key!r}",
+            )
+        seen.add(key)
 
 
 def upsert_profile(
@@ -184,6 +280,7 @@ def upsert_profile(
 
 
 def set_active_profile(profile_name: str, path: Path | None = None) -> Path:
+    """Set active_profile by re-rendering the whole file. Cannot duplicate keys."""
     target = config_path(path)
     if not target.exists():
         msg = f"Config file not found: {target}. Run: python main.py config init"
@@ -192,18 +289,7 @@ def set_active_profile(profile_name: str, path: Path | None = None) -> Path:
     if config is None:
         raise ConfigProfileError(f"Could not load config: {target}")
     config.get_profile(profile_name)
-    text = target.read_text(encoding="utf-8")
-    updated = re.sub(
-        r'^active_profile\s*=\s*".*?"',
-        f'active_profile = "{profile_name}"',
-        text,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if updated == text:
-        updated = f'active_profile = "{profile_name}"\n' + text
-    target.write_text(updated, encoding="utf-8")
-    return target
+    return save_config_file(profile_name, dict(config.profiles), target)
 
 
 def resolve_profile_name(

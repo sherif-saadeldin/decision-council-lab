@@ -14,12 +14,15 @@ from council.cli import (
 )
 from council.config import Settings
 from council.config_profiles import (
+    CONFIG_BACKUP_SUFFIX,
     ConfigProfileError,
+    CorruptConfigFileError,
     UnknownConfigProfileError,
     init_config_file,
     load_config_file,
     profile_display_rows,
     set_active_profile,
+    validate_config_file,
 )
 from main import main
 
@@ -74,6 +77,95 @@ def test_config_use_changes_active_profile(tmp_path: Path) -> None:
     assert config is not None
     assert config.active_profile == "ollama-local"
     assert 'active_profile = "ollama-local"' in path.read_text(encoding="utf-8")
+
+
+def test_config_use_does_not_duplicate_active_profile_line(tmp_path: Path) -> None:
+    """Regression guard for the 'duplicate active_profile' corruption bug."""
+    path = init_config_file(tmp_path / "config.toml")
+    set_active_profile("ollama-local", path)
+    set_active_profile("mock", path)
+    set_active_profile("openai-mini", path)
+    text = path.read_text(encoding="utf-8")
+    occurrences = [line for line in text.splitlines() if line.startswith("active_profile")]
+    assert len(occurrences) == 1, occurrences
+    # The file must still parse cleanly via the safe loader.
+    config = load_config_file(path)
+    assert config is not None
+    assert config.active_profile == "openai-mini"
+
+
+def test_config_use_creates_backup(tmp_path: Path) -> None:
+    path = init_config_file(tmp_path / "config.toml")
+    before = path.read_text(encoding="utf-8")
+    set_active_profile("ollama-local", path)
+    backup = path.with_suffix(path.suffix + CONFIG_BACKUP_SUFFIX)
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == before
+
+
+def test_load_config_rejects_invalid_toml(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("not = valid = toml\n[unterminated\n", encoding="utf-8")
+    with pytest.raises(CorruptConfigFileError) as excinfo:
+        load_config_file(path)
+    message = str(excinfo.value)
+    assert "config init" in message
+    assert str(path) in message
+
+
+def test_load_config_wraps_tomllib_duplicate_key_error(tmp_path: Path) -> None:
+    """Reproduces the user-reported 'Cannot overwrite a value' corruption."""
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'active_profile = "mock"\n'
+        'active_profile = "other"\n'
+        "[profiles.mock]\nmode = \"mock\"\nprovider_name = \"mock\"\n"
+        "model = \"mock-council-v1\"\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(CorruptConfigFileError) as excinfo:
+        load_config_file(path)
+    message = str(excinfo.value)
+    # Raw TOML error is wrapped with a recovery hint.
+    assert "config init" in message
+    assert str(path) in message
+
+
+def test_validate_config_file_reports_corruption(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("oops not = toml at all\n[\n", encoding="utf-8")
+    ok, message = validate_config_file(path)
+    assert ok is False
+    assert message and "config init" in message
+
+
+def test_validate_config_file_ok_for_fresh_init(tmp_path: Path) -> None:
+    path = init_config_file(tmp_path / "config.toml")
+    ok, message = validate_config_file(path)
+    assert ok is True
+    assert message is None
+
+
+def test_save_config_file_is_atomic_no_partial_file(tmp_path: Path) -> None:
+    """If a write fails mid-stream, the previous file must remain readable."""
+    path = init_config_file(tmp_path / "config.toml")
+    original = path.read_text(encoding="utf-8")
+    from council.config_profiles import save_config_file
+
+    profiles = load_config_file(path).profiles  # type: ignore[union-attr]
+    with patch("council.config_profiles._atomic_write_text", side_effect=OSError("disk full")):
+        with pytest.raises(OSError):
+            save_config_file("ollama-local", dict(profiles), path)
+    # The original file must be intact.
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_load_config_surfaces_friendly_error_for_chat_callers(tmp_path: Path) -> None:
+    """`build_chat_context`-style callers must see ConfigProfileError, not TOMLDecodeError."""
+    path = tmp_path / "config.toml"
+    path.write_text('active_profile = "mock"\n[profiles.x\nmode = "mock"\n', encoding="utf-8")
+    with pytest.raises(ConfigProfileError):
+        load_config_file(path)
 
 
 def test_run_profile_applies_values(tmp_path: Path) -> None:

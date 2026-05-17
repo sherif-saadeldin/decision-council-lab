@@ -201,6 +201,23 @@ def test_main_setup_mock_non_interactive(tmp_path: Path, monkeypatch: pytest.Mon
     assert config_file.exists()
 
 
+def test_main_setup_on_corrupt_config_returns_clean_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Setup against a corrupt config.toml must fail with exit 1, not traceback."""
+    config_file = tmp_path / ".dcouncil" / "config.toml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text("this is = not = toml\n[broken\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    with patch("main.run_doctor", _noop_doctor), patch("main.run_smoke", _success_smoke):
+        code = main(["setup", "--non-interactive", "--profile", "mock"])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "config init" in err
+
+
 @pytest.mark.parametrize("profile_name", sorted(SUPPORTED_NON_INTERACTIVE_PROFILES))
 def test_supported_non_interactive_profiles(profile_name: str, tmp_path: Path) -> None:
     config_file = tmp_path / ".dcouncil" / "config.toml"

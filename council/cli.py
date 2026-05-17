@@ -953,13 +953,16 @@ def render_council_result(
             table.add_row(item.slot, item.preset, item.provider_name, item.model_name)
         console.print(table)
 
-    console.print(f"\n[green]Saved JSON:[/green] {json_path}")
-    console.print(f"[green]Saved Markdown:[/green] {md_path}")
+    console.print("[green]Saved JSON:[/green]")
+    console.print(f"  {json_path}", highlight=False, markup=False)
+    console.print("[green]Saved Markdown:[/green]")
+    console.print(f"  {md_path}", highlight=False, markup=False)
     if pack_paths:
         console.print("[green]Implementation pack:[/green]")
         for path in pack_paths:
-            console.print(f"  {path}")
-    console.print(f"\n[bold]Next command:[/bold]\n  {next_cmd}")
+            console.print(f"  {path}", highlight=False, markup=False)
+    console.print("\n[bold]Next command:[/bold]")
+    console.print(f"  {next_cmd}", highlight=False, markup=False)
 
 
 def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> None:
@@ -1028,15 +1031,15 @@ def render_runs_show(console: Console, summary) -> None:
     md_display, md_full = _run_artifact_path_lines(summary.md_path)
     json_display, json_full = _run_artifact_path_lines(summary.json_path)
     console.print("[bold]Markdown[/bold]")
-    console.out(f"  File: {summary.md_path.name}")
-    console.out(f"  Open: {md_full}")
+    console.print(f"  File: {summary.md_path.name}", highlight=False, markup=False)
+    console.print(f"  Open: {md_full}", highlight=False, markup=False)
     if md_display != md_full:
-        console.out(f"  Path: {md_display}")
+        console.print(f"  Path: {md_display}", highlight=False, markup=False)
     console.print("[bold]JSON[/bold]")
-    console.out(f"  File: {summary.json_path.name}")
-    console.out(f"  Open: {json_full}")
+    console.print(f"  File: {summary.json_path.name}", highlight=False, markup=False)
+    console.print(f"  Open: {json_full}", highlight=False, markup=False)
     if json_display != json_full:
-        console.out(f"  Path: {json_display}")
+        console.print(f"  Path: {json_display}", highlight=False, markup=False)
 
     if not summary.md_path.is_file():
         console.print("\n[yellow]Markdown file missing on disk.[/yellow]")
