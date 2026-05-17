@@ -97,6 +97,7 @@ CLI_COMMANDS = frozenset(
         "council",
         "runs",
         "prompts",
+        "chat",
     }
 )
 PREVIEW_ITEM_COUNT = 3
@@ -227,6 +228,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME",
         help="System prompt profile to summarize (default: default).",
     )
+
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Interactive chat session over council commands.",
+    )
+    _add_runs_dir_argument(chat_parser)
+    _add_profile_argument(chat_parser)
+    _add_system_profile_argument(chat_parser)
 
     return parser
 

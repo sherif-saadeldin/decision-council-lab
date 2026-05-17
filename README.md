@@ -40,6 +40,16 @@ Copy `.env.example` to `.env` and configure as needed:
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
+## Chat mode (Slice 5.6)
+
+Interactive CLI session — no TUI, no shell execution:
+
+```bash
+uv run python main.py chat
+```
+
+Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
+
 ## System prompts (Slice 5.5.2)
 
 Role identity lives in `council/system_prompts/` (`base.md` + per-role files). Profiles in `council/system_profiles/` map roles to files (only `default` today). JSON schemas and evidence guardrails stay in code (`council/prompts.py`).
@@ -555,4 +565,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.6 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.7 (Anthropic/Gemini native SDK providers).

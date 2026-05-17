@@ -118,8 +118,11 @@ def main(argv: list[str] | None = None) -> int:
     if command == "runs":
         return _runs_command(args, console, error_console)
 
+    if command == "chat":
+        return _chat_command(args, console, error_console)
+
     error_console.print(
-        "Unknown command. Use: run, council, runs, compare, smoke, setup, presets, "
+        "Unknown command. Use: run, council, chat, runs, compare, smoke, setup, presets, "
         "prompts, doctor, version, config, secrets.",
         style="red",
     )
@@ -356,6 +359,25 @@ def _secrets_command(args, console: Console, error_console: Console) -> int:
             style="red",
         )
         return 1
+    except KNOWN_PROJECT_ERRORS as exc:
+        render_known_error(error_console, exc, quiet=False)
+        return 1
+
+
+def _chat_command(args, console: Console, error_console: Console) -> int:
+    from council.chat import run_chat_session
+
+    try:
+        settings = resolve_settings(args)
+        runtime = resolve_runtime_options(args)
+        profile_name = getattr(args, "profile", None)
+        return run_chat_session(
+            console,
+            error_console,
+            settings=settings,
+            system_profile=runtime.system_profile,
+            config_profile_name=profile_name,
+        )
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=False)
         return 1

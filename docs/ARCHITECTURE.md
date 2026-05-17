@@ -86,6 +86,11 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 | `council` | Multi-model council: per-role preset routing, cross-model debate, optional implementation pack |
 | `runs` | `runs list` (last 10) and `runs show RUN_ID` — inspect artifacts without dumping full markdown |
 | `prompts` | List system prompt files, versions, SHA-256 checksums, and profile bundle hash |
+| `chat` | Interactive REPL over existing commands (no TUI); thin shell, no shell execution |
+
+### Chat mode (Slice 5.6)
+
+`council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
 
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
