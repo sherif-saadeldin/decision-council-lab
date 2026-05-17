@@ -25,6 +25,8 @@ class RunSummary:
     md_path: Path
     decision_preview: str
     confidence_score: float | None
+    parent_run_id: str | None = None
+    thread_id: str | None = None
 
 
 def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
@@ -67,6 +69,18 @@ def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
     confidence = dossier.get("confidence_score")
     confidence_score = float(confidence) if confidence is not None else None
 
+    thread_block = payload.get("decision_thread") or {}
+    parent_run_id = (
+        str(thread_block.get("parent_run_id"))
+        if isinstance(thread_block, dict) and thread_block.get("parent_run_id")
+        else None
+    )
+    thread_id = (
+        str(thread_block.get("thread_id"))
+        if isinstance(thread_block, dict) and thread_block.get("thread_id")
+        else None
+    )
+
     return RunSummary(
         run_id=run_id,
         timestamp=timestamp,
@@ -78,6 +92,8 @@ def _parse_run_payload(payload: dict, run_dir: Path) -> RunSummary | None:
         md_path=run_dir / "run.md",
         decision_preview=preview,
         confidence_score=confidence_score,
+        parent_run_id=parent_run_id,
+        thread_id=thread_id,
     )
 
 
@@ -121,3 +137,33 @@ def get_run_summary(runs_dir: Path, run_id: str) -> RunSummary:
     if summary is None:
         raise RunNotFoundError(run_id, runs_dir)
     return summary
+
+
+def list_thread_runs(runs_dir: Path, thread_id: str) -> list[RunSummary]:
+    """Return every run on the given thread, sorted oldest first.
+
+    The thread anchor (the parent_run_id of the first contextual child) is
+    included if a run with that id exists, even if its own decision_thread
+    is empty — it's the root the chain hangs off of.
+    """
+    if not runs_dir.is_dir():
+        return []
+    results: list[RunSummary] = []
+    for child in runs_dir.iterdir():
+        if not child.is_dir():
+            continue
+        payload = _load_run_json(child)
+        if payload is None:
+            continue
+        summary = _parse_run_payload(payload, child)
+        if summary is None:
+            continue
+        if summary.thread_id == thread_id:
+            results.append(summary)
+            continue
+        if summary.run_id == thread_id:
+            # Root run of the thread — may have no decision_thread block
+            # itself but every child still points at this id.
+            results.append(summary)
+    results.sort(key=lambda item: item.timestamp)
+    return results

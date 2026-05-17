@@ -32,7 +32,10 @@ Slice 5.5 — Verdict quality hardening (done)
 Slice 5.5.1 — Direct answer cleanup + runs show readability (done)
 Slice 5.5.2 — System prompt architecture (done)
 Slice 5.6 — Interactive chat session (done)
-Slice 5.7 — Anthropic/Gemini native SDK providers
+Slice 5.6.1 — Stabilization: atomic config writes, duplicate-key guard, /profile, /status, shell-paste guard, bare-slash crash, runs-show path display (done)
+Slice 5.7 — Profile-aware doctor and recovery loop (done)
+Slice 5.8 — Decision threads and contextual follow-ups (done)
+Slice 5.9 — Anthropic/Gemini native SDK providers
 Slice 6 — Memory/revisit system
 Slice 7 — CLI enhancements
 Slice 8 — UI integration later

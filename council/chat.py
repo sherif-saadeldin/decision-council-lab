@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Literal
@@ -35,10 +37,25 @@ from council.config_profiles import (
     resolve_settings_with_profile,
     set_active_profile,
 )
+from council.decision_thread import (
+    CONTEXT_BLOCK_HEADER,
+    DecisionContext,
+    looks_like_follow_up,
+    summarize_for_context,
+)
+from council.doctor import CheckStatus, DoctorCheck
 from council.provider_availability import (
     HostedProviderUnavailableError,
     credential_source_for_preset,
+    estimate_preset_availability,
     preset_is_hosted,
+)
+from council.recovery import (
+    ClassifiedFailure,
+    classify_for_recovery,
+    format_recovery_lines,
+    is_provider_failure,
+    is_recoverable_with_mock,
 )
 from council.council_session import (
     CouncilSessionRequest,
@@ -89,7 +106,9 @@ SHELL_LIKE_PREFIXES: tuple[str, ...] = (
     "wget ",
     "docker ",
     "kubectl ",
-    "make ",
+    # Note: `make ` was removed in Slice 5.8 because it false-positives on
+    # natural follow-up phrases like "make it cheaper". Council users who
+    # want to paste Makefile commands can use slash commands instead.
     "bash ",
     "sh ",
     "powershell ",
@@ -101,29 +120,41 @@ SHELL_REJECTION_MESSAGE = (
     "(/help) or exit to run shell commands."
 )
 
-HOSTED_FAILURE_HINT = (
-    "Provider failed. Use `/profile mock` to switch to the offline mock, or "
-    "run `/doctor` to see what's missing."
-)
+# When `/doctor` has never run in this session, /status reports this health.
+HEALTH_UNCHECKED = "unchecked"
+HEALTH_HEALTHY = "healthy"
+HEALTH_WARNING = "warning"
+HEALTH_FAILED = "failed"
+
+FALLBACK_PROMPT = "Fallback to mock profile? [Y/n]"
+FALLBACK_PROFILE_NAME = "mock"
 
 CHAT_HELP_LINES: tuple[str, ...] = (
-    "/council <question>  — multi-model council (economy routing)",
-    "/run <question>      — single-provider council run",
-    "/compare <question>  — compare mock preset (offline-safe default)",
-    "/doctor              — configuration checks",
-    "/presets             — list model presets",
-    "/setup               — interactive setup wizard",
-    "/runs                — list recent runs",
-    "/show <run_id|last>  — inspect a saved run",
-    "/pack <run_id|last>  — generate implementation pack (requires approval)",
-    "/prompts             — system prompt inventory",
-    "/profile [name|list] — show, list, or switch active config profile",
-    "/status              — show active profile, routing, provider, last run",
-    "/help                — show this help",
-    "/exit                — leave chat",
+    "/council <question>          — multi-model council (economy routing)",
+    "/run <question>              — single-provider council run",
+    "/compare <question>          — compare mock preset (offline-safe default)",
+    "/doctor [--live|--live-completion]",
+    "                             — health check for the active profile",
+    "/presets                     — list model presets",
+    "/setup                       — interactive setup wizard",
+    "/runs                        — list recent runs",
+    "/show <run_id|last>          — inspect a saved run",
+    "/pack <run_id|last>          — generate implementation pack (requires approval)",
+    "/prompts                     — system prompt inventory",
+    "/profile [name|list]         — show, list, or switch active config profile",
+    "/status                      — active profile, routing, cached health, last run",
+    "/context                     — show the active decision context (if any)",
+    "/use <run_id>                — load a previous run as decision context",
+    "/forget                      — clear active decision context and session memory",
+    "/thread                      — show the linked decision chain for the current thread",
+    "/help                        — show this help",
+    "/exit                        — leave chat",
     "",
     "Type a question without / to run council (confirms first).",
+    "Follow-ups like 'what if...' or 'make it cheaper' may prompt to reuse the last decision.",
 )
+
+FOLLOW_UP_PROMPT_TEMPLATE = "Use previous decision context from {run_id}? [Y/n]"
 
 
 def looks_like_shell_command(text: str) -> bool:
@@ -151,12 +182,41 @@ class ParsedChatLine:
     args: str = ""
 
 
+@dataclass(frozen=True)
+class DoctorCacheEntry:
+    """Snapshot of the last `/doctor` invocation, used by `/status`."""
+
+    profile_name: str
+    health: str  # one of HEALTH_HEALTHY / WARNING / FAILED
+    ran_at: datetime
+    failed_check_count: int
+    warn_check_count: int
+    ok_check_count: int
+    live: bool
+    live_completion: bool
+    latency_seconds: float | None = None
+    summary: str = ""
+
+
 @dataclass
 class ChatSessionState:
     last_run_id: str | None = None
     system_profile: str = DEFAULT_SYSTEM_PROFILE
     routing_mode: str = DEFAULT_ROUTING_MODE
     config_profile_name: str | None = None
+    last_doctor: DoctorCacheEntry | None = None
+    last_failure: ClassifiedFailure | None = None
+    # Decision-thread session memory (Slice 5.8). All fields are runtime-only;
+    # nothing here persists across chat sessions.
+    last_question: str | None = None
+    last_direct_answer: str | None = None
+    last_decision_type: str | None = None
+    last_pack_paths: list[Path] = field(default_factory=list)
+    last_profile: str | None = None
+    last_routing_mode: str | None = None
+    current_context_run_id: str | None = None
+    current_context: DecisionContext | None = None
+    current_thread_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +241,47 @@ def parse_chat_line(line: str) -> ParsedChatLine:
         args = parts[1].strip() if len(parts) > 1 else ""
         return ParsedChatLine(kind=ChatLineKind.SLASH, command=command, args=args)
     return ParsedChatLine(kind=ChatLineKind.NATURAL, args=text)
+
+
+def parse_doctor_args(args: str) -> tuple[bool, bool]:
+    """Parse `/doctor --live --live-completion` flags. Unknown tokens ignored.
+
+    Returns (live, live_completion). `--live-completion` implies live.
+    """
+    tokens = {t.strip().lower() for t in args.split() if t.strip()}
+    live_completion = "--live-completion" in tokens or "live-completion" in tokens
+    live = live_completion or "--live" in tokens or "live" in tokens
+    return live, live_completion
+
+
+def summarize_doctor_checks(checks: list[DoctorCheck]) -> tuple[str, int, int, int]:
+    """Reduce a doctor check list to (health, ok_count, warn_count, fail_count)."""
+    ok = sum(1 for c in checks if c.status == CheckStatus.OK)
+    warn = sum(1 for c in checks if c.status == CheckStatus.WARN)
+    fail = sum(1 for c in checks if c.status == CheckStatus.FAIL)
+    if fail:
+        return HEALTH_FAILED, ok, warn, fail
+    if warn:
+        return HEALTH_WARNING, ok, warn, fail
+    return HEALTH_HEALTHY, ok, warn, fail
+
+
+def _health_style(health: str) -> str:
+    return {
+        HEALTH_HEALTHY: "green",
+        HEALTH_WARNING: "yellow",
+        HEALTH_FAILED: "red",
+    }.get(health, "dim")
+
+
+def _first_failing_message(checks: list[DoctorCheck]) -> str:
+    for check in checks:
+        if check.status == CheckStatus.FAIL:
+            return f"{check.name}: {check.message}"
+    for check in checks:
+        if check.status == CheckStatus.WARN:
+            return f"{check.name}: {check.message}"
+    return "all checks passed"
 
 
 def resolve_active_config_profile_name(config: CouncilConfigFile | None) -> str:
@@ -314,13 +415,14 @@ class ChatSession:
         if looks_like_shell_command(question):
             self.error_console.print(SHELL_REJECTION_MESSAGE, style="yellow")
             return "continue"
+        self._maybe_attach_follow_up_context(question)
         if not self.confirm_fn("Run council on this?", True):
             self.console.print("[dim]Cancelled.[/dim]")
             return "continue"
         try:
             self._run_council(question)
         except KNOWN_PROJECT_ERRORS as exc:
-            self._render_provider_error(exc)
+            self._handle_provider_failure(exc, retry=lambda: self._run_council(question))
         return "continue"
 
     def _handle_slash(self, command: str, args: str) -> Literal["continue", "exit"]:
@@ -331,7 +433,7 @@ class ChatSession:
             "council": self._cmd_council,
             "run": self._cmd_run,
             "compare": self._cmd_compare,
-            "doctor": lambda _a: self._cmd_doctor(),
+            "doctor": self._cmd_doctor,
             "presets": lambda _a: self._cmd_presets(),
             "setup": lambda _a: self._cmd_setup(),
             "runs": lambda _a: self._cmd_runs(),
@@ -340,6 +442,10 @@ class ChatSession:
             "prompts": lambda _a: self._cmd_prompts(),
             "profile": self._cmd_profile,
             "status": lambda _a: self._cmd_status(),
+            "context": lambda _a: self._cmd_context(),
+            "forget": lambda _a: self._cmd_forget(),
+            "use": self._cmd_use,
+            "thread": lambda _a: self._cmd_thread(),
         }
         handler = handlers.get(command)
         if handler is None:
@@ -348,13 +454,81 @@ class ChatSession:
         try:
             return handler(args)
         except KNOWN_PROJECT_ERRORS as exc:
-            self._render_provider_error(exc)
+            self._handle_provider_failure(exc)
             return "continue"
 
-    def _render_provider_error(self, exc: Exception) -> None:
+    def _handle_provider_failure(
+        self,
+        exc: Exception,
+        *,
+        retry: Callable[[], None] | None = None,
+    ) -> None:
+        """Single funnel for known errors. Always renders the original message,
+        then a category + actionable fix + recovery suggestions. For hosted
+        failures, optionally offers a one-keystroke fallback to mock and
+        retries the original action under the new profile."""
         render_known_error(self.error_console, exc, quiet=False)
-        if isinstance(exc, HostedProviderUnavailableError) or self._is_hosted_failure(exc):
-            self.error_console.print(HOSTED_FAILURE_HINT, style="yellow")
+        if not is_provider_failure(exc):
+            # Non-provider known error (e.g. ConfigProfileError) — no recovery loop.
+            return
+        failure = classify_for_recovery(exc)
+        self.state.last_failure = failure
+        reason, fix, suggestions = format_recovery_lines(failure)
+        self.error_console.print(reason, style="yellow")
+        self.error_console.print(fix, style="yellow")
+        self.error_console.print(suggestions, style="yellow")
+
+        if not self._should_offer_fallback(exc, failure):
+            return
+        if not self.confirm_fn(FALLBACK_PROMPT, True):
+            self.console.print("[dim]Staying on the current profile.[/dim]")
+            return
+        if not self._switch_to_fallback_profile():
+            return
+        if retry is None:
+            return
+        # Re-run the original action under the mock profile. Any new failure
+        # propagates through the same funnel — but with no further fallback
+        # offer (we are already on mock).
+        try:
+            retry()
+        except KNOWN_PROJECT_ERRORS as exc2:
+            render_known_error(self.error_console, exc2, quiet=False)
+
+    def _should_offer_fallback(self, exc: Exception, failure: ClassifiedFailure) -> bool:
+        if self.state.config_profile_name == FALLBACK_PROFILE_NAME:
+            return False
+        if not (isinstance(exc, HostedProviderUnavailableError) or self._is_hosted_failure(exc)):
+            return False
+        return is_recoverable_with_mock(failure)
+
+    def _switch_to_fallback_profile(self) -> bool:
+        """Switch active profile to mock. Returns True on success."""
+        config = self.ctx.config
+        if config is None or FALLBACK_PROFILE_NAME not in config.profiles:
+            self.error_console.print(
+                f"No `{FALLBACK_PROFILE_NAME}` profile available — run /setup.",
+                style="red",
+            )
+            return False
+        try:
+            set_active_profile(FALLBACK_PROFILE_NAME, config.path)
+        except KNOWN_PROJECT_ERRORS as exc:
+            render_known_error(self.error_console, exc, quiet=False)
+            return False
+        self.ctx = build_chat_context(
+            self.ctx.settings,
+            system_profile=self.state.system_profile,
+            routing_mode=self.state.routing_mode,
+            config_profile_name=FALLBACK_PROFILE_NAME,
+        )
+        self.state.config_profile_name = FALLBACK_PROFILE_NAME
+        # Health changes too — invalidate the cached doctor entry.
+        self.state.last_doctor = None
+        self.console.print(
+            f"[green]Switched to[/green] [cyan]{FALLBACK_PROFILE_NAME}[/cyan]."
+        )
+        return True
 
     def _is_hosted_failure(self, exc: Exception) -> bool:
         """Best-effort: does this error stem from a hosted provider config?"""
@@ -384,13 +558,128 @@ class ChatSession:
         render_chat_help(self.console)
         return "continue"
 
-    def _cmd_doctor(self) -> Literal["continue", "exit"]:
+    def _cmd_doctor(self, args: str = "") -> Literal["continue", "exit"]:
         from council.doctor import run_doctor
 
+        live, live_completion = parse_doctor_args(args)
         runner = self.doctor_runner or run_doctor
-        checks = runner(self.ctx.settings, runtime=self.ctx.runtime)
+
+        self._print_doctor_header(live=live, live_completion=live_completion)
+
+        start = time.perf_counter()
+        # Older runners (no live kwargs) still work — we always pass runtime.
+        try:
+            checks = runner(
+                self.ctx.settings,
+                runtime=self.ctx.runtime,
+                live=live,
+                live_completion=live_completion,
+            )
+        except TypeError:
+            # Test stub that ignores kwargs — call without the live flags.
+            checks = runner(self.ctx.settings, runtime=self.ctx.runtime)
+        elapsed = time.perf_counter() - start
+
         render_doctor(self.console, checks)
+
+        health, ok, warn, fail = summarize_doctor_checks(checks)
+        self.state.last_doctor = DoctorCacheEntry(
+            profile_name=self.state.config_profile_name or "(env defaults)",
+            health=health,
+            ran_at=datetime.now(timezone.utc),
+            failed_check_count=fail,
+            warn_check_count=warn,
+            ok_check_count=ok,
+            live=live,
+            live_completion=live_completion,
+            latency_seconds=elapsed if (live or live_completion) else None,
+            summary=_first_failing_message(checks),
+        )
+
+        if live or live_completion:
+            self.console.print(
+                f"[dim]Live validation finished in {elapsed:.2f}s "
+                f"(timeout {self.ctx.runtime.timeout_seconds:g}s).[/dim]"
+            )
+
+        if health == HEALTH_FAILED and self._active_profile_is_hosted():
+            self._print_recovery_block(
+                "Recommended recovery:",
+                ("/profile mock", "/doctor", "/setup"),
+            )
         return "continue"
+
+    def _print_doctor_header(self, *, live: bool, live_completion: bool) -> None:
+        settings = self.ctx.settings
+        profile = self.ctx.config_profile
+        profile_name = self.state.config_profile_name or "(env defaults)"
+        provider = settings.llm_provider_name
+        mode = settings.llm_mode
+        model = self._active_model_label()
+        cred_source = self._credential_source_label(profile)
+        api_mode = self.ctx.runtime.api_mode
+        availability = self._availability_label(profile)
+        live_label = (
+            "live-completion" if live_completion else ("live" if live else "preflight only")
+        )
+        lines = [
+            f"Profile        : [cyan]{profile_name}[/cyan]",
+            f"Provider/mode  : [cyan]{provider}[/cyan] ({mode})",
+            f"Model          : [cyan]{model}[/cyan]",
+            f"Credential src : [cyan]{cred_source}[/cyan]",
+            f"API mode       : [cyan]{api_mode}[/cyan]",
+            f"Availability   : [cyan]{availability}[/cyan]",
+            f"Mode           : [cyan]{live_label}[/cyan]",
+        ]
+        self.console.print(
+            Panel("\n".join(lines), title="Doctor — active profile", border_style="cyan")
+        )
+
+    def _active_profile_is_hosted(self) -> bool:
+        profile = self.ctx.config_profile
+        if profile is None:
+            return False
+        if profile.preset and preset_is_hosted(profile.preset):
+            return True
+        return (profile.mode or "").lower() in {"openai", "openai_compatible"}
+
+    def _print_recovery_block(self, title: str, commands: tuple[str, ...]) -> None:
+        body = "\n".join(f"  {cmd}" for cmd in commands)
+        self.error_console.print(
+            Panel(body, title=title, border_style="yellow")
+        )
+
+    def _active_model_label(self) -> str:
+        """Pick the model name actually in use given the current mode."""
+        settings = self.ctx.settings
+        mode = (settings.llm_mode or "").lower()
+        if mode == "mock":
+            return settings.mock_model or "—"
+        if mode == "openai":
+            return settings.openai_model or "—"
+        return settings.llm_model or "—"
+
+    def _credential_source_label(self, profile: ConfigProfile | None) -> str:
+        if profile is not None and profile.preset:
+            return credential_source_for_preset(profile.preset, self.ctx.settings)
+        mode = self.ctx.settings.llm_mode
+        if mode == "mock":
+            return "not_required"
+        from council.secrets import credential_source
+
+        if mode == "openai":
+            return credential_source("OPENAI_API_KEY")
+        return credential_source("LLM_API_KEY")
+
+    def _availability_label(self, profile: ConfigProfile | None) -> str:
+        if profile is not None and profile.preset:
+            return estimate_preset_availability(
+                profile.preset, self.ctx.settings
+            ).display_availability()
+        mode = self.ctx.settings.llm_mode
+        if mode == "mock":
+            return "available"
+        return "live unchecked"
 
     def _cmd_presets(self) -> Literal["continue", "exit"]:
         render_preset_list(self.console)
@@ -516,25 +805,25 @@ class ChatSession:
         provider = self.ctx.settings.llm_provider_name
         mode = self.ctx.settings.llm_mode
         preset = profile.preset if profile else None
-        model = (
-            self.ctx.settings.llm_model
-            or self.ctx.settings.openai_model
-            or self.ctx.settings.mock_model
-        )
-        cred_source: str
-        if preset:
-            cred_source = credential_source_for_preset(preset, self.ctx.settings)
-        elif mode == "mock":
-            cred_source = "not_required"
-        elif mode == "openai":
-            from council.secrets import credential_source
-
-            cred_source = credential_source("OPENAI_API_KEY")
-        else:
-            from council.secrets import credential_source
-
-            cred_source = credential_source("LLM_API_KEY")
+        model = self._active_model_label()
+        cred_source = self._credential_source_label(profile)
         last_run = self.state.last_run_id or "—"
+        doctor = self.state.last_doctor
+        if doctor is None:
+            health = HEALTH_UNCHECKED
+            health_detail = "run `/doctor` to populate"
+            ran_at = "—"
+        else:
+            health = doctor.health
+            stale = (
+                "" if doctor.profile_name == config_label
+                else f" (cached for {doctor.profile_name!r}; profile changed since)"
+            )
+            health_detail = (
+                f"{doctor.ok_check_count} ok / {doctor.warn_check_count} warn / "
+                f"{doctor.failed_check_count} fail — {doctor.summary}{stale}"
+            )
+            ran_at = doctor.ran_at.strftime("%Y-%m-%d %H:%M:%SZ")
         lines = [
             f"Config profile : [cyan]{config_label}[/cyan]",
             f"System profile : [cyan]{self.state.system_profile}[/cyan]",
@@ -543,8 +832,17 @@ class ChatSession:
             f"Preset         : [cyan]{preset or '—'}[/cyan]",
             f"Model          : [cyan]{model or '—'}[/cyan]",
             f"Credential src : [cyan]{cred_source}[/cyan]",
+            f"API mode       : [cyan]{self.ctx.runtime.api_mode}[/cyan]",
+            f"Health         : [{_health_style(health)}]{health}[/{_health_style(health)}]"
+            f"  ({health_detail})",
+            f"Last doctor    : [cyan]{ran_at}[/cyan]",
             f"Last run id    : [cyan]{last_run}[/cyan]",
         ]
+        if self.state.last_failure is not None:
+            lines.append(
+                f"Last failure   : [yellow]{self.state.last_failure.category}[/yellow] — "
+                f"{self.state.last_failure.summary}"
+            )
         self.console.print(Panel("\n".join(lines), title="Chat Status", border_style="blue"))
         return "continue"
 
@@ -630,6 +928,11 @@ class ChatSession:
             ),
             max_debate_rounds=None,
         )
+        context = self.state.current_context
+        if context is not None:
+            self.console.print(
+                f"[cyan]{CONTEXT_BLOCK_HEADER} (parent {context.run_id})[/cyan]"
+            )
         request = CouncilSessionRequest(
             question=question,
             routing_mode=self.state.routing_mode,
@@ -638,6 +941,9 @@ class ChatSession:
             runtime=self.ctx.runtime,
             prompt_create_pack=False,
             create_pack=False,
+            parent_context=context,
+            parent_run_id=(context.run_id if context is not None else None),
+            thread_id=self.state.current_thread_id,
         )
         plan = plan_council_session(request)
         enforce_cost_budget(
@@ -671,11 +977,160 @@ class ChatSession:
             settings=self.ctx.settings,
             implementation_pack_paths=pack_paths or None,
         )
-        self.state.last_run_id = session.result.dossier.run_id
+        self._record_session_memory(question, session.result, pack_paths)
         render_chat_verdict(self.console, session.result)
         self.console.print(f"[green]Saved:[/green] {md_path}")
         if pack_paths:
             self.console.print("[green]Implementation pack written.[/green]")
+
+    # --- session memory + decision-thread helpers (Slice 5.8) ---------------
+
+    def _record_session_memory(
+        self,
+        question: str,
+        result: CouncilRunResult,
+        pack_paths: list[Path],
+    ) -> None:
+        """Refresh the conversational memory after a successful council run."""
+        dossier = result.dossier
+        thread = result.decision_thread
+        self.state.last_run_id = dossier.run_id
+        self.state.last_question = question
+        self.state.last_direct_answer = (
+            dossier.direct_answer.strip()
+            or dossier.recommendation.split("\n", 1)[0].strip()
+        )
+        self.state.last_decision_type = dossier.decision_type.value
+        self.state.last_pack_paths = list(pack_paths)
+        self.state.last_profile = self.state.config_profile_name
+        self.state.last_routing_mode = self.state.routing_mode
+        if thread is not None:
+            # We were given a context; keep the thread anchor stable.
+            self.state.current_thread_id = thread.thread_id
+        elif self.state.current_thread_id is None:
+            # First standalone run in this chat — anchor a new thread.
+            self.state.current_thread_id = dossier.run_id
+
+    def _maybe_attach_follow_up_context(self, question: str) -> None:
+        """If the user typed a follow-up phrase and we have a last run, ask."""
+        if self.state.current_context is not None:
+            return
+        if not self.state.last_run_id:
+            return
+        if not looks_like_follow_up(question):
+            return
+        if not self.confirm_fn(
+            FOLLOW_UP_PROMPT_TEMPLATE.format(run_id=self.state.last_run_id),
+            True,
+        ):
+            return
+        self._load_context_from_run(self.state.last_run_id)
+
+    def _load_context_from_run(self, run_id: str) -> bool:
+        """Load `run_id` from disk and install it as the active context."""
+        try:
+            result = load_run_result(self.ctx.settings.runs_dir, run_id)
+        except RunNotFoundError as exc:
+            self.error_console.print(str(exc), style="red")
+            return False
+        context = summarize_for_context(result)
+        thread = result.decision_thread
+        self.state.current_context = context
+        self.state.current_context_run_id = result.dossier.run_id
+        self.state.current_thread_id = (
+            thread.thread_id if thread is not None else result.dossier.run_id
+        )
+        return True
+
+    def _cmd_context(self) -> Literal["continue", "exit"]:
+        context = self.state.current_context
+        if context is None:
+            self.console.print(
+                "No active decision context. Use [bold]/use RUN_ID[/bold] or accept "
+                "the follow-up prompt after a council run."
+            )
+            return "continue"
+        lines = [
+            f"Run ID    : [cyan]{context.run_id}[/cyan]",
+            f"Thread ID : [cyan]{self.state.current_thread_id or context.run_id}[/cyan]",
+            f"Question  : {context.decision_question}",
+            f"Decision  : [cyan]{context.decision_type.value}[/cyan]",
+            f"Direct    : {context.direct_answer}",
+        ]
+        if context.next_actions:
+            lines.append("Next actions:")
+            lines.extend(f"  - {item}" for item in context.next_actions)
+        if context.do_not_do:
+            lines.append("Do not do:")
+            lines.extend(f"  - {item}" for item in context.do_not_do)
+        if context.approval_gate:
+            lines.append(f"Approval  : {context.approval_gate}")
+        if context.evidence_gaps:
+            lines.append("Evidence gaps:")
+            lines.extend(f"  - {item}" for item in context.evidence_gaps)
+        self.console.print(
+            Panel("\n".join(lines), title="Active Decision Context", border_style="blue")
+        )
+        return "continue"
+
+    def _cmd_forget(self) -> Literal["continue", "exit"]:
+        had_context = self.state.current_context is not None
+        # Clear conversational memory but keep doctor cache and profile state.
+        self.state.current_context = None
+        self.state.current_context_run_id = None
+        self.state.current_thread_id = None
+        self.state.last_run_id = None
+        self.state.last_question = None
+        self.state.last_direct_answer = None
+        self.state.last_decision_type = None
+        self.state.last_pack_paths = []
+        if had_context:
+            self.console.print("[green]Cleared active decision context and session memory.[/green]")
+        else:
+            self.console.print("[dim]Cleared session memory (no context was active).[/dim]")
+        return "continue"
+
+    def _cmd_use(self, args: str) -> Literal["continue", "exit"]:
+        run_id = args.strip()
+        if not run_id:
+            self.error_console.print("Usage: /use RUN_ID", style="red")
+            return "continue"
+        if self._load_context_from_run(run_id):
+            ctx = self.state.current_context
+            assert ctx is not None
+            self.console.print(
+                f"[green]Loaded decision context from[/green] [cyan]{ctx.run_id}[/cyan] "
+                f"({ctx.decision_type.value})."
+            )
+        return "continue"
+
+    def _cmd_thread(self) -> Literal["continue", "exit"]:
+        from council.run_catalog import list_thread_runs
+
+        thread_id = self.state.current_thread_id
+        if thread_id is None:
+            self.console.print(
+                "No active thread. Run council or `/use RUN_ID` to start a thread."
+            )
+            return "continue"
+        runs = list_thread_runs(self.ctx.settings.runs_dir, thread_id)
+        if not runs:
+            self.console.print(
+                f"No persisted runs found for thread [cyan]{thread_id}[/cyan]."
+            )
+            return "continue"
+        lines = [f"Thread ID: [cyan]{thread_id}[/cyan] ({len(runs)} run(s))"]
+        for index, item in enumerate(runs, start=1):
+            marker = "root" if item.run_id == thread_id else "child"
+            preview = item.decision_preview[:60].replace("\n", " ")
+            lines.append(
+                f" {index}. [{marker}] {item.run_id} — "
+                f"{item.timestamp.strftime('%Y-%m-%d %H:%M')} — {preview}"
+            )
+        self.console.print(
+            Panel("\n".join(lines), title="Decision Thread", border_style="cyan")
+        )
+        return "continue"
 
     def run_loop(self) -> int:
         config_label = self.state.config_profile_name or resolve_active_config_profile_name(

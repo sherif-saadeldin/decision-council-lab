@@ -40,7 +40,7 @@ Copy `.env.example` to `.env` and configure as needed:
 | `LLM_MODEL` | Model id for `openai_compatible` |
 | `RUNS_DIR` | Artifact output directory |
 
-## Chat mode (Slice 5.6)
+## Chat mode (Slice 5.6 + 5.7 + 5.8)
 
 Interactive CLI session — no TUI, no shell execution:
 
@@ -48,7 +48,66 @@ Interactive CLI session — no TUI, no shell execution:
 uv run python main.py chat
 ```
 
-Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
+Slash commands: `/council`, `/run`, `/compare`, `/doctor`, `/presets`, `/setup`, `/runs`, `/show`, `/pack`, `/prompts`, `/profile`, `/status`, `/context`, `/use`, `/forget`, `/thread`, `/help`, `/exit`. Type a question without `/` to run council (confirms first). Uses `--system-profile default` and economy routing unless you change profiles in config.
+
+### Profile-aware doctor and recovery loop (Slice 5.7)
+
+`/doctor` reports against the **active config profile**: profile, provider/mode, model, credential source, API mode, and availability. It caches the result on session state so `/status` shows current health without re-running checks.
+
+```text
+chat> /doctor
+┌── Doctor — active profile ──┐
+│ Profile        : mock        │
+│ Provider/mode  : mock (mock) │
+│ Model          : mock-...    │
+│ Credential src : not_required│
+│ API mode       : auto        │
+│ Availability   : available   │
+│ Mode           : preflight   │
+└──────────────────────────────┘
+... doctor table ...
+```
+
+`/doctor --live` and `/doctor --live-completion` run live validation; chat prints elapsed time and the configured timeout. Raw payloads and credentials are never printed.
+
+`/status` shows cached health (`healthy` / `warning` / `failed` / `unchecked`), last-doctor timestamp, and last-failure summary alongside profile, routing, provider, preset, model, credential source, API mode, and last run id.
+
+When a hosted provider fails during `/council`, `/run`, or a natural question, chat classifies the error (`auth_failure`, `timeout`, `parse_failure`, `network_failure`, `api_failure`, `unknown`) and prints a three-line recovery block:
+
+```text
+Reason (auth_failure): missing credential: LLM_API_KEY.
+Fix: Set LLM_API_KEY via `uv run python main.py secrets set LLM_API_KEY`, or `/profile mock`.
+Try: /profile mock  /setup  /doctor
+
+Fallback to mock profile? [Y/n]
+```
+
+Accepting switches to the offline `mock` profile, rebuilds chat context, invalidates the doctor cache, and retries the original action. Declining keeps your profile and your session alive — chat survives repeated provider failures without exiting.
+
+### Decision threads and contextual follow-ups (Slice 5.8)
+
+Chat now keeps lightweight session memory across council runs (`last_run_id`, `last_question`, `last_direct_answer`, `last_decision_type`, `last_pack_paths`, `last_profile`, `last_routing_mode`, `current_context_run_id`, `current_thread_id`) so follow-up questions can reuse a prior decision without re-running discovery.
+
+When you type a natural-language line that looks like a follow-up (`what if ...`, `make it cheaper`, `what about GCC?`, `revise that`, `improve it`, `continue`, `reconsider`, ...), chat asks:
+
+```text
+Use previous decision context from <run_id>? [Y/n]
+```
+
+Accept to attach a compact structured summary of the prior decision — original question, direct answer, decision type, top-3 next actions, top-3 do-not-do, approval gate, top-3 evidence gaps — as a `Using previous decision context` block in the next council prompt. The new run's `run.json` and `run.md` record `parent_run_id`, `thread_id`, and the `context_summary` so the chain is reproducible.
+
+Topic-change questions (no follow-up phrase) never auto-attach — the matcher is conservative on purpose.
+
+New commands:
+
+| Command | Behavior |
+| --- | --- |
+| `/context` | Show the active decision context (run id, thread id, question, decision type, direct answer, top next actions, do-not-do, approval gate, evidence gaps) |
+| `/use <run_id>` | Load any previous run as the active context |
+| `/forget` | Clear active context and session memory (active profile and doctor cache preserved) |
+| `/thread` | List every run on the current thread, oldest first |
+
+`runs list` adds a `Thread` column; `runs show` adds `Thread:` and `Parent:` lines when present. Standalone runs render unchanged.
 
 ## System prompts (Slice 5.5.2)
 

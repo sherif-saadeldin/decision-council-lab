@@ -92,6 +92,61 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 `council/chat.py` provides a readline-style loop (`chat>` prompt) over the same engines as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state tracks `last_run_id` for `/show last` and `/pack last`.
 
+### Decision threads & contextual follow-ups (Slice 5.8)
+
+Chat is now a continuous decision workspace. Three layers:
+
+1. **Pure logic — `council/decision_thread.py`.**
+   - `looks_like_follow_up(text)` matches a conservative phrase set (`what if`, `make it cheaper`, `what about ...`, `revise that`, `improve it`, `continue`, `reconsider`, etc.).
+   - `summarize_for_context(result)` → `DecisionContext` (parent run id, original question, prior direct answer, decision type, top-3 next actions, top-3 do-not-do, approval gate, top-3 evidence gaps). Compact by design — no agent briefs, no debate transcript, no raw payloads.
+   - `compose_question_with_context(q, ctx)` prepends a stable `Using previous decision context` block; `derive_thread_id(parent)` anchors first-generation threads on the parent run id and inherits the existing thread id for grandchildren.
+
+2. **Run model — `council/models.py`.** `RUN_SCHEMA_VERSION` bumped to **1.8**. `CouncilRunResult` gains optional `decision_thread: DecisionThreadMeta | None`. `DecisionThreadMeta` carries `parent_run_id`, `thread_id`, and the structured `context_summary`. Persists into `run.json` and renders into council markdown as a `Previous Context Used` section.
+
+3. **Session memory — `council/chat.py`.** `ChatSessionState` grows runtime-only fields: `last_question`, `last_direct_answer`, `last_decision_type`, `last_pack_paths`, `last_profile`, `last_routing_mode`, `current_context_run_id`, `current_context`, `current_thread_id`. After every successful council run we refresh these fields and anchor the thread id (using the parent thread if continuing, the run's own id if starting fresh).
+
+`/run` is unchanged; `/council` and the natural-language path now both honor `current_context`. When a natural line matches a follow-up phrase AND a `last_run_id` exists, chat asks **"Use previous decision context from <run_id>? [Y/n]"** (default yes). Accepting loads the run from `runs_dir`, summarises it, and threads it into the next request. Topic-change questions never auto-attach (the phrase matcher is conservative on purpose).
+
+New chat commands:
+
+| Command | Behavior |
+| --- | --- |
+| `/context` | Show the active context: run id, thread id, question, decision type, direct answer, top next actions, do-not-do, approval gate, evidence gaps |
+| `/use <run_id>` | Load a previous run from `runs_dir` as the active context. Anchors the thread on that run unless the loaded run already carries one |
+| `/forget` | Clear `current_context`, `current_context_run_id`, `current_thread_id`, and all `last_*` fields. Doctor cache and active profile are preserved |
+| `/thread` | List every run on the current thread (root + children), oldest first, using `run_catalog.list_thread_runs(runs_dir, thread_id)` |
+
+`runs list` shows a `Thread` column (8-char prefix of `thread_id`); `runs show` adds `Thread:` and `Parent:` lines when present. Standalone runs render the same as before.
+
+### Profile-aware doctor & recovery loop (Slice 5.7)
+
+`/doctor` in chat now reports against the **active config profile** explicitly:
+
+| Field | Source |
+|-------|--------|
+| Profile | `ChatSessionState.config_profile_name` |
+| Provider / mode | `ctx.settings.llm_provider_name`, `llm_mode` |
+| Model | profile model / preset / mock model |
+| Credential source | `credential_source_for_preset()` or `credential_source(env_var)` |
+| API mode | `ctx.runtime.api_mode` |
+| Availability | `estimate_preset_availability()` (offline estimate) |
+
+Each `/doctor` invocation updates a `DoctorCacheEntry` on session state (profile name, health rollup `healthy`/`warning`/`failed`, run timestamp, ok/warn/fail counts, latency for live runs). `/status` reads from that cache and never re-runs checks. The cache is invalidated automatically when the active profile changes (manually via `/profile use ...` or via the recovery fallback).
+
+`/doctor` also accepts `--live` and `--live-completion`. Live runs print elapsed time and the configured timeout; raw payloads and credentials are still never printed (existing `live_completion.py` redacts before returning).
+
+Provider failures during `/council`, `/run`, or a natural question are funnelled through `_handle_provider_failure`. `council/recovery.py` classifies the exception into a `ClassifiedFailure` (one of `auth_failure`, `timeout`, `parse_failure`, `network_failure`, `api_failure` (rate-limit promoted), `unknown`) and emits three lines:
+
+```
+Reason (auth_failure): missing credential: LLM_API_KEY.
+Fix: Set LLM_API_KEY via `uv run python main.py secrets set LLM_API_KEY`, or `/profile mock`.
+Try: /profile mock  /setup  /doctor
+```
+
+When the failure is hosted-shaped and the user is not already on `mock`, chat offers a single confirmation: **"Fallback to mock profile? [Y/n]"** (default yes). Accepting switches the active profile via `set_active_profile()`, rebuilds the chat context, invalidates the doctor cache, and retries the original action. The fallback is never offered if the user is already on mock, or for non-recoverable shapes.
+
+Modules: `council/recovery.py` (pure classification, no I/O), `council/providers/failures.py` (existing `FailureKind` taxonomy), `council/chat.py` (cache + UX).
+
 Runtime flags on `run`: `--timeout-seconds`, `--max-retries`, `--fast`, `--debate-rounds`, `--quiet` (suppresses progress).
 
 ### Multi-model council (Slice 5.2)
@@ -248,7 +303,7 @@ Configuration errors:
 
 ## Run artifacts
 
-- `schema_version` **1.4** on `CouncilRunResult`
+- `schema_version` **1.8** on `CouncilRunResult` (1.8 added `decision_thread` for Slice 5.8)
 - `debate_transcript` when `--debate-rounds` > 0
 - optional `prompt_debug.md` per run when CLI flag is set
 - `provider_metadata` and `provider_responses` included in JSON

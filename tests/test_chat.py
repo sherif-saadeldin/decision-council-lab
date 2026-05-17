@@ -439,23 +439,22 @@ def test_chat_recovers_from_hosted_provider_failure(chat_ctx, monkeypatch: pytes
     def boom(*_a, **_k):
         raise HostedProviderUnavailableError("openrouter live ping failed: 401")
 
-    session, _, err = _make_session(new_ctx, council_runner=boom)
-    # Natural input → council runner raises HostedProviderUnavailableError.
-    # Session must stay alive and surface the actionable hint.
-    confirm_calls: list[str] = []
+    confirm_calls: list[tuple[str, bool]] = []
 
-    def confirm(message: str, _default: bool) -> bool:
-        confirm_calls.append(message)
-        return True
+    def confirm(message: str, default: bool) -> bool:
+        confirm_calls.append((message, default))
+        # Decline the council-run confirm AND the fallback prompt — the
+        # classification UX should still print without any fallback action.
+        return "Run council on this?" in message  # only the first confirm: Yes
 
-    session.confirm_fn = confirm
+    session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=confirm)
     assert session.handle_line("Should we ship?") == "continue"
     err_text = err.getvalue()
     assert "openrouter" in err_text
-    # Rich auto-highlights tokens like `/profile mock`, so match a phrase Rich
-    # will leave untouched (the leading phrase).
-    assert "Provider failed" in err_text
-    assert "/profile mock" in err_text or "profile" in err_text
+    # New recovery UX prints a Reason line and a Fix line; Rich won't
+    # decorate the leading 'Reason' phrase.
+    assert "Reason" in err_text
+    assert "Fix" in err_text
 
 
 def test_chat_known_error_via_slash_keeps_session_alive(chat_ctx) -> None:
@@ -468,12 +467,13 @@ def test_chat_known_error_via_slash_keeps_session_alive(chat_ctx) -> None:
     def boom(*_a, **_k):
         raise MissingProviderCredentialError("openrouter", "LLM_API_KEY")
 
-    session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=lambda _m, _d: True)
+    # Decline the fallback prompt — the test is verifying that the session
+    # stays alive and prints the recovery hint, not the fallback path.
+    session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=lambda _m, _d: False)
     assert session.handle_line("/council Should we ship?") == "continue"
     err_text = err.getvalue()
     assert "LLM_API_KEY" in err_text
-    # The hosted-failure hint phrase Rich won't decorate.
-    assert "Provider failed" in err_text
+    assert "auth_failure" in err_text
 
 
 def test_bare_slash_does_not_crash() -> None:

@@ -66,7 +66,7 @@ def test_main_version_command(capsys) -> None:
     code = main(["version"])
     captured = capsys.readouterr()
     assert code == 0
-    assert "1.7" in captured.out
+    assert "1.8" in captured.out
 
 
 def test_main_doctor_mock_mode(capsys) -> None:

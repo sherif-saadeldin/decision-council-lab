@@ -28,10 +28,10 @@ def test_markdown_includes_chair_judgment_fields(mock_settings: Settings) -> Non
     assert result.dossier.strongest_argument_for in md_text
 
 
-def test_schema_version_is_1_7(mock_settings: Settings) -> None:
+def test_schema_version_is_current(mock_settings: Settings) -> None:
     result, _ = run_council("Test schema version?", settings=mock_settings)
     assert result.schema_version == RUN_SCHEMA_VERSION
-    assert RUN_SCHEMA_VERSION == "1.7"
+    assert RUN_SCHEMA_VERSION == "1.8"
 
 
 def test_prompt_debug_off_by_default(tmp_path: Path) -> None:

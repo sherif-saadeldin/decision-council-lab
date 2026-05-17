@@ -20,6 +20,40 @@ def _question_title(question: str, *, max_len: int = 80) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _format_thread_section(lines: list[str], result: CouncilRunResult) -> None:
+    thread = result.decision_thread
+    if thread is None:
+        return
+    context = thread.context_summary
+    lines.extend(
+        [
+            "",
+            "## Previous Context Used",
+            "",
+            f"- **Parent run:** `{thread.parent_run_id}`",
+            f"- **Thread ID:** `{thread.thread_id}`",
+            "",
+            "**Context Summary**",
+            "",
+            f"- **Original question:** {context.decision_question}",
+            f"- **Prior direct answer:** {context.direct_answer}",
+            f"- **Prior decision:** {context.decision_type.value}",
+        ]
+    )
+    if context.next_actions:
+        lines.append("- **Prior next actions:**")
+        lines.extend(f"  - {item}" for item in context.next_actions)
+    if context.do_not_do:
+        lines.append("- **Prior do-not-do:**")
+        lines.extend(f"  - {item}" for item in context.do_not_do)
+    if context.approval_gate:
+        lines.append(f"- **Prior approval gate:** {context.approval_gate}")
+    if context.evidence_gaps:
+        lines.append("- **Prior evidence gaps:**")
+        lines.extend(f"  - {item}" for item in context.evidence_gaps)
+    lines.append("")
+
+
 def _format_cost_estimate_markdown(
     lines: list[str],
     result: CouncilRunResult,
@@ -190,6 +224,7 @@ def format_council_run_markdown(
         dossier.decision_question,
     ]
 
+    _format_thread_section(lines, result)
     _format_cost_estimate_markdown(lines, result)
 
     if result.role_assignments:

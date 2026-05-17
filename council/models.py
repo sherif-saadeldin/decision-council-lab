@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from council.decision_thread import DecisionThreadMeta
     from council.providers.models import ProviderMetadata, ProviderResponse
 
 
@@ -106,7 +107,7 @@ class DecisionDossier(BaseModel):
     unsupported_assumptions: list[str] = Field(default_factory=list)
 
 
-RUN_SCHEMA_VERSION = "1.7"
+RUN_SCHEMA_VERSION = "1.8"
 
 
 class RoleAssignmentRecord(BaseModel):
@@ -152,6 +153,9 @@ class CouncilRunResult(BaseModel):
     routing_mode: str | None = None
     cost_estimate: CouncilCostEstimateRecord | None = None
     prompt_metadata: PromptRunMetadata | None = None
+    # Decision-thread linkage (Slice 5.8). Only present when this run was
+    # produced with an explicit prior-decision context attached.
+    decision_thread: "DecisionThreadMeta | None" = None
 
     @property
     def provider_name(self) -> str:
@@ -163,10 +167,12 @@ class CouncilRunResult(BaseModel):
 
 
 def _rebuild_models() -> None:
+    from council.decision_thread import DecisionThreadMeta
     from council.providers.models import ProviderMetadata, ProviderResponse
 
     CouncilRunResult.model_rebuild(
         _types_namespace={
+            "DecisionThreadMeta": DecisionThreadMeta,
             "ProviderMetadata": ProviderMetadata,
             "ProviderResponse": ProviderResponse,
         }

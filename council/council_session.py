@@ -6,6 +6,11 @@ from uuid import uuid4
 
 from council.config import Settings
 from council.costing import CouncilCostEstimate, estimate_council_cost
+from council.decision_thread import (
+    DecisionContext,
+    DecisionThreadMeta,
+    compose_question_with_context,
+)
 from council.provider_availability import (
     build_preset_availability_for_routing,
     validate_hosted_presets_live,
@@ -64,6 +69,12 @@ class CouncilSessionRequest:
     prompt_create_pack: bool = True
     runtime: RuntimeOptions | None = None
     base_settings: Settings | None = None
+    # Decision-thread linkage (Slice 5.8). When set, the structured context
+    # is prepended to the question and persisted as `decision_thread` on
+    # the resulting CouncilRunResult.
+    parent_context: DecisionContext | None = None
+    parent_run_id: str | None = None
+    thread_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,7 +151,11 @@ def run_council_session(
     run_id = str(uuid4())
     run_started = time.perf_counter()
     debug_collector = PromptDebugCollector()
-    question = request.question.strip()
+    raw_question = request.question.strip()
+    if request.parent_context is not None:
+        question = compose_question_with_context(raw_question, request.parent_context)
+    else:
+        question = raw_question
 
     with system_profile_context(runtime.system_profile):
         return _run_council_session_inner(
@@ -240,6 +255,8 @@ def _run_council_session_inner(
         for assignment in routing.assignments.values()
     ]
 
+    decision_thread = _build_decision_thread_meta(request)
+
     result = attach_prompt_metadata(
         CouncilRunResult(
             dossier=dossier,
@@ -261,6 +278,7 @@ def _run_council_session_inner(
             role_assignments=role_records,
             routing_mode=request.routing_mode,
             cost_estimate=_cost_record(cost_estimate),
+            decision_thread=decision_thread,
         ),
         system_profile=runtime.system_profile,
     )
@@ -272,6 +290,22 @@ def _run_council_session_inner(
         cost_estimate=cost_estimate,
         implementation_pack_paths=[],
         debug_collector=debug_collector,
+    )
+
+
+def _build_decision_thread_meta(
+    request: CouncilSessionRequest,
+) -> DecisionThreadMeta | None:
+    """Resolve parent_run_id / thread_id linkage from the request, if any."""
+    context = request.parent_context
+    if context is None:
+        return None
+    parent_run_id = request.parent_run_id or context.run_id
+    thread_id = request.thread_id or parent_run_id
+    return DecisionThreadMeta(
+        parent_run_id=parent_run_id,
+        thread_id=thread_id,
+        context_summary=context,
     )
 
 

@@ -7,7 +7,8 @@
       "Bash(mkdir -p /tmp/dcouncil-smoke)",
       "Bash(rm -rf /tmp/dcouncil-smoke/*)",
       "Read(//tmp/**)",
-      "Bash(uv --project \"D:\\\\Projects\\\\decision-council-lab\\\\.claude\\\\worktrees\\\\cool-tesla-675136\" run python \"D:\\\\Projects\\\\decision-council-lab\\\\.claude\\\\worktrees\\\\cool-tesla-675136\\\\main.py\" config init)"
+      "Bash(uv --project \"D:\\\\Projects\\\\decision-council-lab\\\\.claude\\\\worktrees\\\\cool-tesla-675136\" run python \"D:\\\\Projects\\\\decision-council-lab\\\\.claude\\\\worktrees\\\\cool-tesla-675136\\\\main.py\" config init)",
+      "Bash(PYTHONIOENCODING=utf-8 uv run python -c ' *)"
     ]
   }
 }

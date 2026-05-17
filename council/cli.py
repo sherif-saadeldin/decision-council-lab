@@ -977,6 +977,7 @@ def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> No
     table.add_column("Time (UTC)")
     table.add_column("Question")
     table.add_column("Chair")
+    table.add_column("Thread")
     for item in summaries:
         kind_style = "cyan" if item.run_kind == "council" else "dim"
         question = item.question.replace("\n", " ")
@@ -985,12 +986,19 @@ def render_runs_list(console: Console, runs_dir: Path, *, limit: int = 10) -> No
         chair = f"{item.chair_provider} / {item.chair_model}"
         if len(chair) > 36:
             chair = chair[:35] + "…"
+        # Thread column: short prefix of thread_id, or '—' for a root /
+        # standalone run. Helps the eye group continuations together.
+        if item.thread_id:
+            thread_label = item.thread_id[:8] + "…"
+        else:
+            thread_label = "—"
         table.add_row(
             f"[{kind_style}]{item.run_kind}[/{kind_style}]",
             item.run_id,
             item.timestamp.strftime("%Y-%m-%d %H:%M"),
             question or "—",
             chair,
+            thread_label,
         )
     console.print(table)
     console.print(
@@ -1015,12 +1023,18 @@ def render_runs_show(console: Console, summary) -> None:
         if summary.confidence_score is not None
         else "—"
     )
+    thread_line = ""
+    if summary.thread_id or summary.parent_run_id:
+        thread_id = summary.thread_id or "—"
+        parent = summary.parent_run_id or "—"
+        thread_line = f"\nThread: [cyan]{thread_id}[/cyan]\nParent: [cyan]{parent}[/cyan]"
     console.print(
         Panel.fit(
             f"Run ID: [cyan]{summary.run_id}[/cyan]\n"
             f"Kind: {summary.run_kind}\n"
             f"Time (UTC): {summary.timestamp.isoformat()}\n"
-            f"Confidence: {confidence}",
+            f"Confidence: {confidence}"
+            f"{thread_line}",
             title="Run Summary",
         )
     )
