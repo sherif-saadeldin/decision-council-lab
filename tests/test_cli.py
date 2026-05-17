@@ -135,10 +135,13 @@ def test_run_parser_accepts_source_flags() -> None:
             "abc",
             "--source-path",
             "docs",
+            "--operational-profile",
+            "cheap",
         ]
     )
     assert args.source_packs == ["abc"]
     assert args.source_paths == ["docs"]
+    assert args.operational_profile == "cheap"
 
 
 def test_sources_commands_scan_list_show_remove(tmp_path: Path, monkeypatch, capsys) -> None:

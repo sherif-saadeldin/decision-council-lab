@@ -152,7 +152,7 @@ def test_run_persists_source_metadata_and_markdown_section(tmp_path: Path) -> No
     assert "source_context_summary" in payload
     markdown = (run_dir / "run.md").read_text(encoding="utf-8")
     assert "## Sources Used" in markdown
-    assert "## Source Relevance" not in markdown
+    assert "## Why These Sources Were Prioritized" not in markdown
 
 
 def test_chat_source_commands(mock_settings, monkeypatch) -> None:
@@ -217,6 +217,17 @@ def test_exact_phrase_boost(tmp_path: Path) -> None:
     assert "exact phrase boost" in ranked[0].reasons
 
 
+def test_strategic_docs_are_prioritized_over_tests_by_default(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Product vision\nroadmap and plan", encoding="utf-8")
+    (tmp_path / "tests_feature.md").write_text("# tests\nroadmap and plan", encoding="utf-8")
+    pack = scan_source_input(source_pack_id="rank-6", name="rank", source_path=tmp_path)
+    ranked = rank_source_pack(
+        pack,
+        SourceQueryContext(question="product roadmap plan"),
+    )
+    assert ranked[0].summary.path == "README.md"
+
+
 def test_context_builder_deduplicates_snippets(tmp_path: Path) -> None:
     (tmp_path / "a.md").write_text("# A\nsame line\nsame line\n", encoding="utf-8")
     (tmp_path / "b.md").write_text("# B\nsame line\nsame line\n", encoding="utf-8")
@@ -259,7 +270,7 @@ def test_cli_sources_query_command(tmp_path: Path, monkeypatch, capsys) -> None:
     assert code == 0
     text = capsys.readouterr().out
     assert "Source relevance query" in text
-    assert "score:" in text
+    assert "relevance:" in text
 
 
 def test_markdown_relevance_section_rendered(tmp_path: Path) -> None:
@@ -284,7 +295,7 @@ def test_markdown_relevance_section_rendered(tmp_path: Path) -> None:
     settings = Settings(llm_mode="mock", runs_dir=tmp_path, mock_model="mock-council-v1")
     save_run(result, settings=settings)
     markdown = (tmp_path / "src-run-2" / "run.md").read_text(encoding="utf-8")
-    assert "## Source Relevance" in markdown
+    assert "## Why These Sources Were Prioritized" in markdown
     assert "ARCHITECTURE.md" in markdown
-    assert "score:" in markdown
+    assert "relevance:" in markdown
 

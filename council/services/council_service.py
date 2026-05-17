@@ -102,6 +102,7 @@ class ChatCouncilRequest:
     intake: DecisionIntake | None = None
     council_runner: RunCouncilSessionFn | None = None
     source_pack_ids: list[str] | None = None
+    council_presets: list[str] | None = None
     source_context_summary: str = ""
     source_relevance: list[SourceRelevanceRecord] | None = None
     source_excluded_files: list[str] | None = None
@@ -275,6 +276,7 @@ class CouncilService:
         return CouncilSessionRequest(
             question=request.question,
             routing_mode=request.routing_mode,
+            council_presets=list(request.council_presets or []),
             debate_rounds=debate_rounds,
             base_settings=request.settings,
             runtime=request.runtime,

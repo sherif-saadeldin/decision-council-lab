@@ -40,6 +40,27 @@ _EXTENSION_WEIGHTS = {
     ".csv": 0.02,
 }
 _DOC_PATH_HINTS = ("architecture", "build_order", "roadmap", "spec", "docs")
+_STRATEGIC_HINTS = (
+    "readme",
+    "architecture",
+    "roadmap",
+    "spec",
+    "build_order",
+    "plan",
+    "product",
+    "vision",
+    "todo",
+)
+_IMPLEMENTATION_NOISE_HINTS = (
+    "test",
+    "tests",
+    "prompt",
+    "renderer",
+    "rendering",
+    "cache",
+    "generated",
+    "__pycache__",
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +125,9 @@ def _score_file(
     if any(hint in path_text for hint in _DOC_PATH_HINTS):
         score += 0.07
         reasons.append("architecture/spec path bias")
+    if any(hint in path_text for hint in _STRATEGIC_HINTS):
+        score += 0.12
+        reasons.append("strategic document priority")
 
     ext_weight = _EXTENSION_WEIGHTS.get(summary.extension, 0.0)
     if ext_weight > 0:
@@ -119,6 +143,10 @@ def _score_file(
     if tech_hits:
         score += 0.07
         reasons.append("explicit technology match")
+
+    if _should_penalize_noise(path_text, terms):
+        score -= 0.10
+        reasons.append("implementation-detail de-prioritization")
 
     score += _recency_boost_placeholder(summary.path)
     if score > 1.0:
@@ -139,6 +167,14 @@ def _frequency_score(terms: list[str], combined: str) -> float:
         return 0.0
     hits = sum(combined.count(term) for term in terms)
     return hits / (len(terms) * 2)
+
+
+def _should_penalize_noise(path_text: str, terms: list[str]) -> bool:
+    noisy = [hint for hint in _IMPLEMENTATION_NOISE_HINTS if hint in path_text]
+    if not noisy:
+        return False
+    requested = any(term in noisy or term in {"test", "tests", "prompt", "renderer"} for term in terms)
+    return not requested
 
 
 def _query_terms(query: SourceQueryContext) -> list[str]:

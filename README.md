@@ -118,6 +118,25 @@ Safety defaults:
 
 Stored packs live at `.dcouncil/sources/<source_pack_id>.json`. Future web upload should map to the same `SourcePack` model; PDF/OCR/vector search are intentionally deferred.
 
+## Human-first UX stabilization (Slice 6.4)
+
+This slice keeps architecture unchanged and improves trust, tone, and safe behavior:
+
+- new operational profiles: `offline`, `cheap`, `balanced`, `hosted`
+- chat startup auto-selects the safest mode and reports it in plain language
+- pre-execution safe degradation prevents mid-conversation hosted auth failures
+- source explanations now read like analyst notes instead of infrastructure logs
+- intake answers normalize shorthand fragments into structured constraints/risks
+- deterministic relevance now boosts strategic docs (`README`, `ARCHITECTURE`, `ROADMAP`, `SPEC`, `BUILD_ORDER`, `PLAN`, `PRODUCT`, `VISION`, `TODO`) and de-prioritizes implementation-noise files unless explicitly requested
+
+You can choose an operational profile from the CLI:
+
+```bash
+uv run python main.py chat --operational-profile offline
+uv run python main.py run "Question?" --operational-profile cheap
+uv run python main.py council "Question?" --operational-profile balanced
+```
+
 ### Guided decision conversation (Slice 6.0)
 
 Example session:
@@ -864,4 +883,4 @@ Type-check `council` and `main.py` only. `uv run mypy .` is not supported becaus
 
 ## Build order
 
-See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md). Next up: Slice 5.7 (Anthropic/Gemini native SDK providers).
+See [docs/BUILD_ORDER.md](docs/BUILD_ORDER.md).

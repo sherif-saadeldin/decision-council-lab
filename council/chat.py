@@ -104,6 +104,7 @@ from council.services.review_service import (
 from council.services.run_service import RunQuery, RunService
 from council.storage.run_store import FileRunStore
 from council.sources.service import SourceService
+from council.runtime_profiles import apply_profile_to_settings, resolve_operational_profile
 from council.verdict_quality import VerdictQualityError
 
 __all__ = [
@@ -187,13 +188,13 @@ INTAKE_OPENING_LINE = (
     "Let's think this through together. I'll ask a few quick questions, "
     "summarize what I heard, then run the council."
 )
-INTAKE_RUN_PROMPT = "Run council with this context? [Y/n]"
+INTAKE_RUN_PROMPT = "Ready for me to run the council analysis?"
 INTAKE_EDIT_PROMPT = "Edit intake first?"
 INTAKE_DISCARDED_HINT = (
     "Intake cleared. Type a fresh goal to start over, or use /council to skip "
     "intake entirely."
 )
-SHOW_FULL_BREAKDOWN_PROMPT = "Show full council breakdown?"
+SHOW_FULL_BREAKDOWN_PROMPT = "Want the full council breakdown?"
 
 FOLLOW_UP_PROMPT_TEMPLATE = "Use previous decision context from {run_id}? [Y/n]"
 APPROVE_NOW_PROMPT = "Approve now?"
@@ -313,6 +314,28 @@ def _first_failing_message(checks: list[DoctorCheck]) -> str:
         if check.status == CheckStatus.WARN:
             return f"{check.name}: {check.message}"
     return "all checks passed"
+
+
+def _human_source_recap(payload) -> str:
+    important: list[str] = []
+    implementation: list[str] = []
+    for item in payload.relevance[:8]:
+        path = item.path.lower()
+        if any(token in path for token in ("readme", "architecture", "roadmap", "spec", "build_order", "plan", "vision", "product", "todo")):
+            important.append(item.path)
+        else:
+            implementation.append(item.path)
+    if important:
+        return (
+            "[cyan]I reviewed your strategic docs first[/cyan]: "
+            + ", ".join(important[:3])
+        )
+    if implementation:
+        return (
+            "[cyan]I reviewed your implementation history before generating this verdict[/cyan]: "
+            + ", ".join(implementation[:3])
+        )
+    return "[cyan]I reviewed the attached source context before generating this verdict.[/cyan]"
 
 
 def resolve_active_config_profile_name(config: CouncilConfigFile | None) -> str:
@@ -468,7 +491,7 @@ class ChatSession:
         return self._run_with_existing_context(line)
 
     def _run_with_existing_context(self, question: str) -> bool:
-        if not self.confirm_fn("Run council on this?", True):
+        if not self.confirm_fn("Ready for me to run the council analysis?", True):
             self.console.print("[dim]Cancelled.[/dim]")
             return True
         try:
@@ -1011,6 +1034,7 @@ class ChatSession:
             f"Config profile : [cyan]{config_label}[/cyan]",
             f"System profile : [cyan]{self.state.system_profile}[/cyan]",
             f"Routing mode   : [cyan]{self.state.routing_mode}[/cyan]",
+            f"Operating mode : [cyan]{self.state.operational_profile}[/cyan]",
             f"Provider/mode  : [cyan]{provider}[/cyan] ({mode})",
             f"Preset         : [cyan]{preset or '—'}[/cyan]",
             f"Model          : [cyan]{model or '—'}[/cyan]",
@@ -1022,6 +1046,8 @@ class ChatSession:
             f"Last run id    : [cyan]{last_run}[/cyan]",
             f"Active sources : [cyan]{', '.join(self.state.active_source_pack_ids) or '—'}[/cyan]",
         ]
+        if self.state.operational_fallback:
+            lines.append(f"Mode note      : [yellow]{self.state.operational_fallback}[/yellow]")
         if self.state.last_failure is not None:
             lines.append(
                 f"Last failure   : [yellow]{self.state.last_failure.category}[/yellow] — "
@@ -1219,6 +1245,14 @@ class ChatSession:
         if not question:
             self.error_console.print("Usage: /run <question>", style="red")
             return "continue"
+        plan = resolve_operational_profile(
+            requested=self.state.operational_profile,
+            settings=self.ctx.settings,
+        )
+        self.state.operational_profile = plan.effective
+        self.state.operational_fallback = plan.fallback_summary
+        if plan.fallback_summary:
+            self.console.print(f"[yellow]{plan.fallback_summary}[/yellow]")
         debate_rounds = resolve_debate_rounds_with_profile(
             self.ctx.config_profile,
             cli_debate_rounds=None,
@@ -1231,14 +1265,11 @@ class ChatSession:
             decision_mode=self.state.current_mode.value if self.state.current_mode else "",
         )
         if source_payload.summary:
-            self.console.print(
-                "[cyan]Using source context:[/cyan] "
-                + ", ".join(item.path for item in source_payload.relevance[:3])
-            )
+            self.console.print(_human_source_recap(source_payload))
         execution = self._council_service().run_standard(
             CouncilRequest(
                 question=question,
-                settings=self.ctx.settings,
+                settings=apply_profile_to_settings(self.ctx.settings, plan=plan),
                 debate_rounds=debate_rounds,
                 runtime=self.ctx.runtime,
                 progress=NullProgressReporter(),
@@ -1293,6 +1324,14 @@ class ChatSession:
         return "continue"
 
     def _run_council(self, question: str, *, intake: DecisionIntake | None = None) -> None:
+        plan = resolve_operational_profile(
+            requested=self.state.operational_profile,
+            settings=self.ctx.settings,
+        )
+        self.state.operational_profile = plan.effective
+        self.state.operational_fallback = plan.fallback_summary
+        if plan.fallback_summary:
+            self.console.print(f"[yellow]{plan.fallback_summary}[/yellow]")
         context = self.state.current_context
         if context is not None:
             self.console.print(
@@ -1300,7 +1339,7 @@ class ChatSession:
             )
         if intake is not None:
             self.console.print(
-                "[cyan]Using guided intake context (goal, constraints, mode).[/cyan]"
+                "[cyan]I used your goal, constraints, and preferred decision style to guide this analysis.[/cyan]"
             )
         source_payload = self._source_service().build_context(
             source_pack_ids=self.state.active_source_pack_ids,
@@ -1309,14 +1348,11 @@ class ChatSession:
             decision_mode=self.state.current_mode.value if self.state.current_mode else "",
         )
         if source_payload.summary:
-            self.console.print(
-                "[cyan]Using source context:[/cyan] "
-                + ", ".join(item.path for item in source_payload.relevance[:3])
-            )
+            self.console.print(_human_source_recap(source_payload))
         execution = self._council_service().run_chat_council(
             ChatCouncilRequest(
                 question=question,
-                routing_mode=self.state.routing_mode,
+                routing_mode=plan.routing_mode if self.state.routing_mode == DEFAULT_ROUTING_MODE else self.state.routing_mode,
                 settings=self.ctx.settings,
                 runtime=self.ctx.runtime,
                 config_profile=self.ctx.config_profile,
@@ -1329,6 +1365,7 @@ class ChatSession:
                 source_relevance=source_payload.relevance,
                 source_excluded_files=source_payload.excluded_files,
                 source_context_warnings=source_payload.warnings,
+                council_presets=plan.council_presets,
             )
         )
         session = execution.session
@@ -1665,7 +1702,7 @@ class ChatSession:
             pack = service.scan_and_save(Path(tokens[1]))
             self.state.active_source_pack_ids = [pack.source_pack_id]
             render_sources_show(self.console, pack)
-            self.console.print(f"[green]Active source pack:[/green] {pack.source_pack_id}")
+            self.console.print(f"[green]Got it. Active source pack:[/green] {pack.source_pack_id}")
             return "continue"
         if sub == "use":
             if len(tokens) < 2:
@@ -1673,11 +1710,11 @@ class ChatSession:
                 return "continue"
             pack = service.load(tokens[1])
             self.state.active_source_pack_ids = [pack.source_pack_id]
-            self.console.print(f"[green]Active source pack:[/green] {pack.source_pack_id}")
+            self.console.print(f"[green]Using source pack:[/green] {pack.source_pack_id}")
             return "continue"
         if sub == "clear":
             self.state.active_source_pack_ids = []
-            self.console.print("[dim]Cleared active source packs.[/dim]")
+            self.console.print("[dim]Cleared source context for upcoming runs.[/dim]")
             return "continue"
         if sub == "show":
             if len(tokens) < 2:
@@ -1715,6 +1752,8 @@ class ChatSession:
             config_profile_name=config_label,
             system_profile=self.state.system_profile,
             routing_mode=self.state.routing_mode,
+            operational_profile=self.state.operational_profile,
+            operational_note=self.state.operational_fallback,
         )
         while True:
             try:
@@ -1742,6 +1781,7 @@ def run_chat_session(
     system_profile: str = DEFAULT_SYSTEM_PROFILE,
     config_profile_name: str | None = None,
     routing_mode: str = DEFAULT_ROUTING_MODE,
+    operational_profile: str | None = None,
     input_fn: InputFn | None = None,
     confirm_fn: ConfirmFn | None = None,
     council_runner: Callable[..., CouncilSessionResult] | None = None,
@@ -1754,10 +1794,16 @@ def run_chat_session(
         routing_mode=routing_mode,
         config_profile_name=config_profile_name,
     )
+    operational_plan = resolve_operational_profile(
+        requested=operational_profile,
+        settings=ctx.settings,
+    )
     state = ChatSessionState(
         system_profile=system_profile,
-        routing_mode=routing_mode,
+        routing_mode=operational_plan.routing_mode if routing_mode == DEFAULT_ROUTING_MODE else routing_mode,
         config_profile_name=config_profile_name or resolve_profile_name(config=ctx.config),
+        operational_profile=operational_plan.effective,
+        operational_fallback=operational_plan.fallback_summary,
     )
     session = ChatSession(
         console=console,

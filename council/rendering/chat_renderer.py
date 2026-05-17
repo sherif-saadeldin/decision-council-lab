@@ -62,15 +62,20 @@ def render_chat_welcome(
     config_profile_name: str,
     system_profile: str,
     routing_mode: str,
+    operational_profile: str,
+    operational_note: str | None = None,
 ) -> None:
     lines = [
-        f"Config profile: [cyan]{config_profile_name}[/cyan]",
+        f"Running in [cyan]{operational_profile}[/cyan] mode.",
+        f"Conversation profile: [cyan]{config_profile_name}[/cyan]",
+        f"Reasoning style: [cyan]{routing_mode}[/cyan]",
         f"System profile: [cyan]{system_profile}[/cyan]",
-        f"Routing mode: [cyan]{routing_mode}[/cyan] (council default)",
         "",
         "Slash commands:",
         *CHAT_HELP_LINES,
     ]
+    if operational_note:
+        lines.insert(1, operational_note)
     console.print(Panel("\n".join(lines), title="Decision Council Chat", border_style="blue"))
 
 

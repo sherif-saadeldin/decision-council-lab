@@ -51,6 +51,7 @@ from council.doctor import run_doctor
 from council.engine import run_council
 from council.progress import ConsoleProgressReporter, NullProgressReporter
 from council.run_catalog import RunNotFoundError
+from council.runtime_profiles import apply_profile_to_settings, resolve_operational_profile
 from council.services.council_service import CouncilRequest, CouncilService, MultiCouncilRequest
 from council.services.pack_service import PackGenerationBlockedError, PackRequest, PackService
 from council.services.review_service import RejectRequest, ReviewRequest, ReviewService
@@ -205,6 +206,16 @@ def _run_command(args, console: Console, error_console: Console) -> int:
     try:
         settings = resolve_settings(args)
         runtime = resolve_runtime_options(args)
+        explicit_preset = bool(getattr(args, "preset", None))
+        if not explicit_preset or getattr(args, "operational_profile", None) is not None:
+            op_plan = resolve_operational_profile(
+                requested=getattr(args, "operational_profile", None),
+                settings=settings,
+            )
+            console.print(op_plan.startup_summary)
+            if op_plan.fallback_summary:
+                console.print(op_plan.fallback_summary)
+            settings = apply_profile_to_settings(settings, plan=op_plan)
         source_payload = _resolve_source_payload(args)
         debate_rounds = resolve_debate_rounds(args, runtime)
         progress = (
@@ -280,6 +291,28 @@ def _council_command(args, console: Console, error_console: Console) -> int:
 
     try:
         request = build_council_request(args)
+        op_plan = resolve_operational_profile(
+            requested=getattr(args, "operational_profile", None),
+            settings=request.base_settings or Settings.from_env(),
+        )
+        console.print(op_plan.startup_summary)
+        if op_plan.fallback_summary:
+            console.print(op_plan.fallback_summary)
+        explicit_presets = bool(
+            request.council_presets
+            or request.researcher_preset
+            or request.advocate_preset
+            or request.skeptic_preset
+            or request.risk_preset
+            or request.operator_preset
+            or request.chair_preset
+        )
+        if not explicit_presets:
+            request = replace(
+                request,
+                routing_mode=op_plan.routing_mode,
+                council_presets=op_plan.council_presets,
+            )
         source_payload = _resolve_source_payload(args)
         request = replace(
             request,
@@ -429,6 +462,7 @@ def _chat_command(args, console: Console, error_console: Console) -> int:
             settings=settings,
             system_profile=runtime.system_profile,
             config_profile_name=profile_name,
+            operational_profile=getattr(args, "operational_profile", None),
         )
     except KNOWN_PROJECT_ERRORS as exc:
         render_known_error(error_console, exc, quiet=False)

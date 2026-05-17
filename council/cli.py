@@ -138,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_run_arguments(run_parser)
     _add_source_arguments(run_parser)
+    _add_operational_profile_argument(run_parser)
 
     subparsers.add_parser("presets", help="List model routing presets.")
     doctor_parser = subparsers.add_parser("doctor", help="Check provider configuration.")
@@ -222,6 +223,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_council_arguments(council_parser)
     _add_source_arguments(council_parser)
+    _add_operational_profile_argument(council_parser)
 
     runs_parser = subparsers.add_parser("runs", help="List and inspect saved council runs.")
     runs_sub = runs_parser.add_subparsers(dest="runs_command", required=True)
@@ -249,6 +251,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runs_dir_argument(chat_parser)
     _add_profile_argument(chat_parser)
     _add_system_profile_argument(chat_parser)
+    _add_operational_profile_argument(chat_parser)
 
     # Slice 5.10: lifecycle verbs as first-class subcommands. Mirror the
     # chat slash vocabulary (/approve, /reject, /archive, /review, /pack)
@@ -779,6 +782,15 @@ def _add_source_arguments(parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="PATH",
         help="Scan a local folder/file and attach as temporary source context (repeatable).",
+    )
+
+
+def _add_operational_profile_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--operational-profile",
+        choices=["offline", "cheap", "balanced", "hosted"],
+        default=None,
+        help="Human-first runtime profile (offline, cheap, balanced, hosted).",
     )
 
 
@@ -1313,16 +1325,16 @@ def render_sources_remove(console: Console, source_pack_id: str, removed: bool) 
 def render_sources_query(console: Console, source_pack_id: str, payload) -> None:
     lines = [f"Source pack: [cyan]{source_pack_id}[/cyan]"]
     if payload.matched_keywords:
-        lines.append(f"Matched keywords: {', '.join(payload.matched_keywords[:12])}")
+        lines.append(f"Matched themes: {', '.join(payload.matched_keywords[:12])}")
     lines.append("")
-    lines.append("Top ranked files:")
+    lines.append("Most relevant files:")
     for item in payload.relevance[:10]:
         lines.append(f"- {item.path}")
-        lines.append(f"  - score: {item.score:.2f}")
+        lines.append(f"  - relevance: {item.score:.2f}")
         if item.matched_terms:
-            lines.append(f"  - matched: {', '.join(item.matched_terms[:8])}")
+            lines.append(f"  - matched themes: {', '.join(item.matched_terms[:8])}")
         if item.why_selected:
-            lines.append(f"  - why: {', '.join(item.why_selected[:6])}")
+            lines.append(f"  - selected because: {', '.join(item.why_selected[:6])}")
         for snippet in item.snippets[:2]:
             lines.append(f"  - snippet: {snippet}")
     if payload.excluded_files:

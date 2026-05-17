@@ -141,7 +141,7 @@ Subcommands via `main.py` (legacy positional question still maps to `run`):
 
 ### Chat mode (Slice 5.6)
 
-`council/chat.py` provides a readline-style loop (`chat>` prompt) over the same services as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with economy routing by default; pack generation always requires explicit confirmation. Session state lives in `council/chat_state.py`; rendering helpers live under `council/rendering/`.
+`council/chat.py` provides a readline-style loop (`chat>` prompt) over the same services as the CLI subcommands. It does not execute shell commands or autonomous code. Natural-language lines prompt for council confirmation; `/council` runs multi-model council with safe operational defaults and preflight degradation when hosted credentials are unavailable; pack generation always requires explicit confirmation. Session state lives in `council/chat_state.py`; rendering helpers live under `council/rendering/`.
 
 ### Guided decision conversation (Slice 6.0)
 
@@ -156,9 +156,9 @@ The chat session ([council/chat.py](council/chat.py)) drives it:
 
 1. **Natural input** — if no intake is active, the first line becomes the goal and the conversation starts. If a follow-up phrase matches a recent run (Slice 5.8), that branch wins first and skips intake.
 2. **Subsequent lines** — answer the current question (mode → context → constraints → success → risks → optional notes). Bad mode answers re-ask without advancing.
-3. **Summary panel** — once all required fields are answered, render `"Here's my understanding"` and ask `"Run council with this context? [Y/n]"`. Decline → offer `Edit intake first?` → pick a field to edit; second decline discards the draft.
+3. **Summary panel** — once all required fields are answered, render `"Here's my understanding"` and ask `"Ready for me to run the council analysis?"`. Decline → offer `Edit intake first?` → pick a field to edit; second decline discards the draft.
 4. **Council run** — the intake is prepended to the chair question via `compose_question_with_intake`, the mode's routing/debate defaults override the session defaults, and the intake is persisted on `CouncilRunResult.intake`.
-5. **Human-first result** — `render_chat_verdict_short` shows only direct answer + top 3 reasons + biggest warning + next step. The full panel (`Do next`, `Do not do`, `Approval gate`) is one confirm away: `Show full council breakdown? [y/N]`.
+5. **Human-first result** — `render_chat_verdict_short` shows only direct answer + top 3 reasons + biggest warning + next step. The full panel (`Do next`, `Do not do`, `Approval gate`) is one confirm away: `Want the full council breakdown?`.
 
 New chat commands:
 
@@ -447,11 +447,22 @@ Before prompt injection, source files are ranked deterministically using:
 
 Selection is hard-capped by files/snippets/chars with duplicate snippet
 suppression and explainability metadata (`score`, `matched_terms`,
-`why_selected`). `run.md` now includes a `## Source Relevance` section with
+`why_selected`). `run.md` now includes a `## Why These Sources Were Prioritized` section with
 selected and excluded files.
 
 Embeddings/vector DB are intentionally deferred to keep this slice cheap,
 inspectable, and local-first.
+
+## Human-first UX stabilization (Slice 6.4)
+
+Slice 6.4 intentionally avoids adding infrastructure and instead stabilizes
+trust and conversation quality:
+
+- **Operational profiles** (`council/runtime_profiles.py`): `offline`, `cheap`, `balanced`, `hosted`.
+- **Safe degradation before execution**: when hosted credentials are unavailable, chat/council degrade to offline local reasoning before the run starts.
+- **Conversational rendering**: startup, source recaps, and source relevance explanations use user-facing phrasing instead of provider/routing internals.
+- **Intake normalization** (`council/intake_normalizer.py`): shorthand fragments are normalized into structured constraints/risks.
+- **Strategic relevance weighting**: deterministic ranking boosts strategic docs (`README`, `ARCHITECTURE`, `ROADMAP`, `SPEC`, `BUILD_ORDER`, `PLAN`, `PRODUCT`, `VISION`, `TODO`) and de-prioritizes implementation-noise files (`tests`, prompt files, renderers, cache/generated files) unless explicitly requested.
 
 ## Run artifacts
 

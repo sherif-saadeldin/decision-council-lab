@@ -133,25 +133,25 @@ def _format_sources_section(lines: list[str], result: CouncilRunResult) -> None:
         for source_pack_id in result.source_pack_ids:
             lines.append(f"- Source pack: `{source_pack_id}`")
     if result.source_context_summary.strip():
-        lines.append("- Source context summary:")
+        lines.append("- What I reviewed before deciding:")
         for raw_line in result.source_context_summary.splitlines():
             if raw_line.strip():
                 lines.append(f"  - {raw_line.strip()}")
     lines.append("")
     if result.source_relevance:
-        lines.extend(["## Source Relevance", ""])
+        lines.extend(["## Why These Sources Were Prioritized", ""])
         for item in result.source_relevance:
             lines.append(f"- `{item.path}`")
-            lines.append(f"  - score: {item.score:.2f}")
+            lines.append(f"  - relevance: {item.score:.2f}")
             if item.matched_terms:
-                lines.append(f"  - matched: {', '.join(item.matched_terms[:8])}")
+                lines.append(f"  - matched themes: {', '.join(item.matched_terms[:8])}")
             if item.why_selected:
-                lines.append(f"  - why: {', '.join(item.why_selected[:6])}")
+                lines.append(f"  - selected because: {', '.join(item.why_selected[:6])}")
         if result.source_excluded_files:
-            lines.append("- Excluded due to caps:")
+            lines.append("- Skipped to keep the context concise:")
             lines.extend(f"  - {entry}" for entry in result.source_excluded_files[:10])
         if result.source_context_warnings:
-            lines.append("- Warnings:")
+            lines.append("- Safety notes:")
             lines.extend(f"  - {entry}" for entry in result.source_context_warnings[:5])
         lines.append("")
 

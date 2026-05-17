@@ -28,7 +28,7 @@ from council.config_profiles import (
 from council.provider_availability import HostedProviderUnavailableError
 from council.providers.errors import MissingProviderCredentialError
 from council.config import Settings
-from council.council_session import CouncilSessionResult
+from council.council_session import CouncilSessionRequest, CouncilSessionResult
 from council.doctor import CheckStatus, DoctorCheck
 from council.models import CouncilRunResult, DecisionDossier, DecisionType
 from council.providers.models import ProviderMetadata
@@ -101,6 +101,8 @@ def test_welcome_shows_system_profile() -> None:
         config_profile_name="mock",
         system_profile="default",
         routing_mode="economy",
+        operational_profile="offline",
+        operational_note=None,
     )
     text = buffer.getvalue()
     assert "default" in text
@@ -210,6 +212,33 @@ def test_council_flow_full_breakdown_opt_in(chat_ctx) -> None:
     assert "Do next" in text
     assert "Do not do" in text
     assert "Approval gate" in text
+
+
+def test_chat_degrades_to_offline_before_hosted_failure(chat_ctx) -> None:
+    ctx = chat_ctx
+    captured: dict[str, CouncilSessionRequest] = {}
+
+    def runner(request: CouncilSessionRequest, **_kw):
+        captured["request"] = request
+        return _session_result()
+
+    out = StringIO()
+    err = StringIO()
+    session = ChatSession(
+        console=Console(file=out, force_terminal=True, width=120),
+        error_console=Console(file=err, force_terminal=True, width=120),
+        ctx=ctx,
+        state=ChatSessionState(operational_profile="hosted"),
+        confirm_fn=lambda _m, _d: False,
+        council_runner=runner,
+    )
+    session.handle_line("/council Should we ship?")
+    assert "request" in captured
+    request = captured["request"]
+    assert request.routing_mode == "manual"
+    assert request.council_presets == ["mock"]
+    assert "Hosted models were unavailable" in out.getvalue()
+    assert "authentication failed" not in err.getvalue().lower()
 
 
 def test_show_last_works(
@@ -512,7 +541,7 @@ def test_chat_recovers_from_hosted_provider_failure(chat_ctx, monkeypatch: pytes
         confirm_calls.append((message, default))
         # Decline the council-run confirm AND the fallback prompt — the
         # classification UX should still print without any fallback action.
-        return "Run council on this?" in message  # only the first confirm: Yes
+        return "Ready for me to run the council analysis?" in message  # only the first confirm: Yes
 
     session, _, err = _make_session(new_ctx, council_runner=boom, confirm_fn=confirm)
     # Slice 6.0: use /council to skip intake and exercise the direct

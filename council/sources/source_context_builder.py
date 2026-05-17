@@ -44,7 +44,7 @@ def build_source_context(
 
     selected: list[SourceRelevanceRecord] = []
     excluded: list[str] = []
-    lines: list[str] = ["Using source context:"]
+    lines: list[str] = ["I reviewed the following materials before answering:"]
     seen_snippets: set[str] = set()
     seen_files: set[str] = set()
     snippet_count = 0
@@ -97,13 +97,13 @@ def build_source_context(
         )
 
     if excluded:
-        lines.append("- Excluded due to caps/duplication:")
+        lines.append("- Skipped to keep this concise:")
         lines.extend(f"  - {item}" for item in excluded[:10])
     if ignored:
-        lines.append("- Ignored during scan:")
+        lines.append("- Ignored while scanning:")
         lines.extend(f"  - {item}" for item in ignored[:8])
     if warnings:
-        lines.append("- Warnings:")
+        lines.append("- Safety notes:")
         lines.extend(f"  - {item}" for item in _dedupe(warnings)[:5])
     summary = "\n".join(lines)
     if len(summary) > caps.max_chars:
@@ -118,11 +118,11 @@ def build_source_context(
 
 
 def _render_preview(entry: RankedSourceFile, snippets: list[str]) -> list[str]:
-    lines = [f"- {entry.summary.path} (score: {entry.score:.2f})"]
+    lines = [f"- {entry.summary.path} (relevance {entry.score:.2f})"]
     if entry.matched_terms:
-        lines.append(f"  - matched: {', '.join(entry.matched_terms[:8])}")
+        lines.append(f"  - matched themes: {', '.join(entry.matched_terms[:8])}")
     if entry.reasons:
-        lines.append(f"  - why: {', '.join(entry.reasons[:5])}")
+        lines.append(f"  - selected because: {', '.join(entry.reasons[:5])}")
     for snippet in snippets[:2]:
         lines.append(f"  - snippet: {snippet[:180]}")
     return lines

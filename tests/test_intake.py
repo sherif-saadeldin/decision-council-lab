@@ -150,7 +150,11 @@ def test_next_intake_question_walks_order_skipping_optional() -> None:
     # context → constraints → success → risks → (optional notes)
     intake = apply_intake_answer(intake, "context", "Solo founder, pre-seed.")
     intake = apply_intake_answer(intake, "constraints", "time, money, solo")
-    assert intake.constraints == ["time", "money", "solo"]
+    assert intake.constraints == [
+        "Limited time",
+        "Financial pressure",
+        "Single-operator constraints",
+    ]
     intake = apply_intake_answer(intake, "success_definition", "10 paying users.")
     intake = apply_intake_answer(intake, "risks", "burnout, slow growth")
     assert is_intake_complete(intake)
@@ -286,7 +290,7 @@ def test_mid_intake_answers_advance_through_questions(
     assert intake.goal == "Build an AI startup."
     assert intake.preferred_mode == DecisionMode.DEEP_ANALYSIS
     assert intake.context == "Pre-seed, two co-founders."
-    assert intake.constraints == ["time", "money"]
+    assert intake.constraints == ["Limited time", "Financial pressure"]
     assert intake.success_definition == "Hit 1000 weekly active users in 90 days."
     # The next required field is `risks`.
     assert session.state.current_intake_field == "risks"
@@ -334,8 +338,8 @@ def test_completed_intake_summary_and_run_council(
     assert req.intake is not None
     assert req.intake.goal == "Should we ship the cache?"
     assert req.intake.preferred_mode == DecisionMode.FAST_ANSWER
-    # Mode mapping pushed routing mode to economy + 0 rounds.
-    assert req.routing_mode == "economy"
+    # Safe offline default takes precedence for chat runtime mode.
+    assert req.routing_mode == "manual"
     assert req.debate_rounds == 0
     # The intake summary panel was rendered before the council ran.
     text = out.getvalue()
@@ -606,7 +610,7 @@ def test_full_breakdown_opt_in_renders_full_panel(
 def test_intake_run_prompt_constant_is_used() -> None:
     """Documentation test: the prompt string is stable so the chat tests
     can match on it without relying on Rich formatting quirks."""
-    assert "Run council" in INTAKE_RUN_PROMPT
+    assert INTAKE_RUN_PROMPT == "Ready for me to run the council analysis?"
 
 
 # --- no live network -------------------------------------------------------

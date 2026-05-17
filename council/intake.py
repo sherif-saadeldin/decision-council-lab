@@ -20,6 +20,11 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from council.intake_normalizer import (
+    normalize_constraint_fragments,
+    normalize_context_text,
+    normalize_risk_fragments,
+)
 INTAKE_BLOCK_HEADER = "Decision intake"
 
 
@@ -307,8 +312,14 @@ def apply_intake_answer(
         parsed = parse_mode(text)
         if parsed is not None:
             update["preferred_mode"] = parsed
-    elif question.is_list:
-        update["constraints" if field == "constraints" else field] = _split_list_answer(text)
+    elif field == "constraints":
+        normalized = normalize_constraint_fragments(text)
+        update["constraints"] = normalized or _split_list_answer(text)
+    elif field == "risks":
+        normalized = normalize_risk_fragments(text)
+        update["risks"] = normalized or _split_list_answer(text)
+    elif field == "context":
+        update["context"] = normalize_context_text(text)
     else:
         update[field] = text
     return intake.model_copy(update=update)

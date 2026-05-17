@@ -53,6 +53,8 @@ class ChatSessionState:
     current_mode: DecisionMode | None = None
     last_intake: DecisionIntake | None = None
     active_source_pack_ids: list[str] = field(default_factory=list)
+    operational_profile: str = "offline"
+    operational_fallback: str | None = None
 
 
 @dataclass(frozen=True)
